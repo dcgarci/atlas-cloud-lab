@@ -1,0 +1,17 @@
+ATLAS V2.12.20 LAB — VALIDATION REPORT
+Data: 14/09/2026
+
+VALIDACOES EXECUTADAS NO PACOTE-FONTE
+- Python compileall backend/app + launcher: OK
+- TypeScript tsc -b: OK
+- Backend test suite: 198 passed / 0 failed
+- Historical DB empacotado (backend/ort_v2.db): 565 candles / 5 sessoes / 0 gaps / 0 ticks
+- Historico: 04/09, 08/09, 09/09, 10/09 e 11/09/2026; 113 candles por sessao; READY; completeness 1.0
+- Contrato V2.12.20 adicionado para menu central, Copy Trader Profit azul, cursor verde e CTRL/PAN.
+
+FRONTEND DIST
+O bundle frontend/dist da V2.12.18 foi removido propositalmente do pacote para impedir UI antiga.
+Na primeira execucao pelo ATLAS.bat, PREPARAR_ATLAS.bat recompila o frontend no Windows e grava atlas-build-version.txt = 2.12.20.
+
+PENDENCIAS CONHECIDAS
+Ver PENDENCIAS_V21220.txt.

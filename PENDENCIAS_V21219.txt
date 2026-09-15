@@ -1,0 +1,18 @@
+ATLAS V2.12.20 — CHECKPOINT DE PENDENCIAS
+
+1. AUTO MAPEAR REPLAY / COM
+   - Erro: ROUTING_WORKBOOK_NOT_AVAILABLE mesmo com Roteamento_REPLAY.xlsm aberto e ReadOnly=False.
+   - Causa localizada: backend/app/market/adapters/profit_excel_tick.py
+   - Fluxo: discover_profit_excel_mapping() -> probe._open() -> win32com.client.GetObject(str(target)).
+
+2. TESTE LIVE REAL
+   - PROFIT / EXCEL AO VIVO
+   - MODO LIVE
+   - RTD WINV26_F_0
+   - TRANSPORTE CONNECTED
+
+3. RECOVERY RTD/EXCEL completo.
+4. Perda/retorno de comunicacao.
+5. Regressao final Copy Trader.
+6. Empacotamento portatil sem caminhos fixos C:\ATLAS DADOS.
+7. Acabamento final do Cockpit Profit em etapa posterior.

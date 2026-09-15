@@ -1,0 +1,32 @@
+{
+  "version": "2.12.20",
+  "build": "CopyTraderSafetyHardening",
+  "date": "2026-09-12",
+  "backend_tests_passed": 194,
+  "python_compileall": true,
+  "frontend_ts_syntax_files": 48,
+  "sqlite_migration_verified": true,
+  "diagnostic_export_verified": true,
+  "real_broker_execution": false,
+  "routing": "DRY_RUN_ONLY + SUPERVISED_SIM",
+  "features": [
+    "COPY_TRADER_UI",
+    "PROCESS_PID_WINDOW_BINDING",
+    "SOFTWARE_ONLINE_FAIL_CLOSED",
+    "BRIDGE_HEALTH_CLASSIFICATION",
+    "DATA_FRESHNESS_STATUS",
+    "MARKET_DATA_SANITY_GATE",
+    "SOURCE_TIME_REGRESSION_RESET",
+    "TRADE_LIFECYCLE_ABORT_AUDIT",
+    "TRADE_TIMESTAMP_MONOTONIC_GUARD",
+    "SAFETY_BLOCK_AUDIT",
+    "DIRECTIONAL_TIE_NO_TRADE",
+    "SESSION_AWARE_DIAGNOSTICS",
+    "SUPERVISED_SIM_STATE_MACHINE",
+    "SMART_PROTECTION_MONOTONICITY"
+  ],
+  "post_zip_backend_tests_passed": 194,
+  "post_zip_ts_syntax_files": 48,
+  "post_zip_sqlite_migration_verified": true,
+  "release_zip_retested": true
+}

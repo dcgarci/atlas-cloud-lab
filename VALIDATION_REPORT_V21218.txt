@@ -1,0 +1,38 @@
+ATLAS V2.12.20 LAB — INTERNAL VALIDATION REPORT
+Build: COPY TRADER / SAFETY HARDENING
+Date: 2026-09-12
+
+SOURCE VALIDATION
+[PASS] Python compileall: backend/app + backend/tests.
+[PASS] Backend pytest full suite: 194 passed.
+[PASS] Dedicated V2.12.20 tests: 15 passed.
+[PASS] Copy Trader false-window rejection by PID ownership.
+[PASS] Background process without owned window => DETECTADO but OFFLINE.
+[PASS] Platform missing => supervised ARM blocked.
+[PASS] Supervised state machine preserved.
+[PASS] Safety blocks produce SAFETY_BLOCK audit events.
+[PASS] Trade close rejects exit timestamp before entry timestamp.
+[PASS] Open trade reset generates POSITION_ABORTED.
+[PASS] Market-data sanity gate detects extreme short-window jumps.
+[PASS] Source-time regression / resync contracts present.
+[PASS] SQLite additive migration confirmed: paper_trades.run_id + replay_session_id.
+[PASS] Diagnostic export confirmed: summary current_session + period_summary + copy_trader_lab.csv.
+[PASS] Frontend TS/TSX syntax transpile: 48 files, zero syntax errors.
+
+FRONTEND BUILD NOTE
+[NOT EXECUTED HERE] Full npm/Vite build. The source package intentionally does not contain node_modules; npm install exceeded this execution environment's time limit. PREPARAR_ATLAS.bat on Windows performs npm install and npm run build before validation.
+
+SAFETY CONTRACT
+real_execution_enabled = false
+No broker-order routing was added.
+
+RELEASE GATE
+The ZIP must be extracted into a clean folder and the backend test suite must pass again from the extracted ZIP before release.
+
+POST-ZIP RELEASE VERIFICATION
+[PASS] ZIP extracted into a clean directory.
+[PASS] Required V2.12.20 correction markers found inside the extracted ZIP.
+[PASS] Python compileall rerun from extracted ZIP.
+[PASS] Backend pytest rerun from extracted ZIP: 194 passed.
+[PASS] Frontend TS/TSX syntax rerun from extracted ZIP: 48 files, zero syntax errors.
+[PASS] SQLite migration rerun from extracted ZIP: run_id + replay_session_id present.

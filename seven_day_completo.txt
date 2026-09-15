@@ -1,0 +1,128 @@
+﻿from __future__ import annotations
+
+from sqlalchemy import select
+
+from app.db.base import SessionLocal
+from app.db.models import MarketSessionORM, MarketCandleORM
+from app.context.models import SevenDayContext
+
+
+def seven_day_context(
+    symbol: str,
+    timeframe: str,
+    current_market_date: str,
+    current_price: float,
+) -> SevenDayContext:
+    symbol = symbol.upper()
+    timeframe = timeframe.lower()
+
+    with SessionLocal() as db:
+        sessions = db.execute(
+            select(MarketSessionORM)
+            .where(
+                MarketSessionORM.symbol == symbol,
+                MarketSessionORM.timeframe == timeframe,
+                MarketSessionORM.market_date < current_market_date,
+            )
+            .order_by(
+                MarketSessionORM.market_date.desc(),
+                MarketSessionORM.session_id.desc(),
+            )
+            .limit(7)
+        ).scalars().all()
+
+        if not sessions:
+            return SevenDayContext()
+
+        highs = []
+        lows = []
+        closes = []
+        ranges = []
+
+        for session in reversed(sessions):
+            candles = db.execute(
+                select(MarketCandleORM)
+                .where(
+                    MarketCandleORM.session_id == session.session_id,
+                    MarketCandleORM.symbol == symbol,
+                    MarketCandleORM.timeframe == timeframe,
+                )
+                .order_by(
+                    MarketCandleORM.ts.asc(),
+                    MarketCandleORM.id.asc(),
+                )
+            ).scalars().all()
+
+            if not candles:
+                continue
+
+            high = max(x.high for x in candles)
+            low = min(x.low for x in candles)
+            close = candles[-1].close
+
+            highs.append(high)
+            lows.append(low)
+            closes.append(close)
+            ranges.append(high-low)
+
+        if not highs:
+            return SevenDayContext()
+
+        high = max(highs)
+        low = min(lows)
+        mid = (high+low)/2
+        rng = max(high-low, 1e-9)
+        position = max(
+            0.0,
+            min(1.0, (current_price-low)/rng),
+        )
+
+        if position >= .90:
+            location = "UPPER_EXTREME"
+        elif position >= .60:
+            location = "UPPER_HALF"
+        elif position > .40:
+            location = "MID_RANGE"
+        elif position > .10:
+            location = "LOWER_HALF"
+        else:
+            location = "LOWER_EXTREME"
+
+        if len(closes) >= 3:
+            rising = closes[-1] > closes[-2] > closes[-3]
+            falling = closes[-1] < closes[-2] < closes[-3]
+
+            close_direction = (
+                "RISING"
+                if rising
+                else "FALLING"
+                if falling
+                else "MIXED"
+            )
+        else:
+            close_direction = "UNKNOWN"
+
+        if len(ranges) >= 4:
+            recent = sum(ranges[-2:])/2
+            prior = sum(ranges[:-2])/max(len(ranges[:-2]),1)
+
+            if recent > prior*1.25:
+                range_regime = "EXPANDING"
+            elif recent < prior*.75:
+                range_regime = "CONTRACTING"
+            else:
+                range_regime = "STABLE"
+        else:
+            range_regime = "UNKNOWN"
+
+        return SevenDayContext(
+            high=high,
+            low=low,
+            mid=mid,
+            position_pct=position*100,
+            location=location,
+            close_direction=close_direction,
+            range_regime=range_regime,
+            sessions_used=len(highs),
+        )
+

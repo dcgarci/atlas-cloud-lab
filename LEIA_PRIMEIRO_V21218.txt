@@ -1,0 +1,41 @@
+ATLAS V2.12.20 LAB
+COPY TRADER / SAFETY HARDENING
+
+ESTA VERSÃO DEVE SER INSTALADA ANTES DE CONTINUAR A BATERIA DE TESTES.
+
+PRINCIPAIS MUDANÇAS
+- PROFIT BRIDGE foi substituído visualmente por COPY TRADER.
+- Detecção da plataforma agora é vinculada ao PID real do processo.
+- DETECTADO/NÃO DETECTADO e ONLINE/OFFLINE não dependem mais do texto da janela.
+- HEARTBEAT DO BRIDGE é independente do status da plataforma.
+- Barra de resposta operacional ganhou centralização e maior destaque.
+- STATUS DOS DADOS e freshness gate adicionados.
+- Proteção contra timestamp regressivo, tick anômalo e trade órfão reforçada.
+- Bloqueios de segurança passam a ser auditados.
+- Empate LONG/SHORT passa a NO TRADE.
+
+SEGURANÇA
+- ENVIO DE ORDENS REAIS CONTINUA DESABILITADO.
+- Use Replay/Simulação durante toda a validação desta versão.
+
+INSTALAÇÃO / PREPARAÇÃO
+1. Extraia TODO o ZIP para uma pasta local nova.
+2. Execute PREPARAR_ATLAS.bat.
+3. Execute VALIDAR_ATLAS.bat.
+4. Somente se a validação concluir com APROVADO, execute INICIAR_ATLAS.bat.
+5. GERAR_ATLAS_EXE.bat / INSTALAR_ATLAS_WINDOWS.bat são opcionais depois da validação.
+
+RETOMADA DOS TESTES
+Primeiro faremos regressão curta:
+- COPY TRADER: DETECTADO/ONLINE com plataforma aberta.
+- NÃO DETECTADO/OFFLINE com plataforma fechada.
+- SIMULAÇÃO SEGURA: 1 compra registrada sem posição LAB.
+- SIMULAÇÃO SUPERVISIONADA: COMPRAR -> COMPRADO 1 -> ZERAR; VENDER -> VENDIDO 1 -> ZERAR.
+
+Depois retomaremos o checklist do ponto onde paramos:
+- reconexão da plataforma;
+- freshness RTD/dados;
+- leitura de posição externa ZERADO/COMPRADO/VENDIDO;
+- quantidade/preço médio;
+- Replay 2x/5x/10x;
+- proteções e financeiro.

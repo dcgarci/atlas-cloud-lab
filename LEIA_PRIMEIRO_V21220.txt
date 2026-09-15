@@ -1,0 +1,14 @@
+ATLAS V2.12.20 LAB
+
+CHECKPOINT: RUNTIME AUTÔNOMO + AUTO MAP SEM COM
+
+Para o teste no Windows:
+1. Extraia a pasta em um local novo.
+2. Execute ATLAS.bat.
+3. Não mate processos manualmente.
+4. Se houver V2.12.19 antiga na porta 8000, a V2.12.20 deve fazer a troca sozinha.
+5. O topo deve mostrar V2.12.20.
+6. Para REPLAY, abra Profit Replay e Roteamento_REPLAY.xlsm.
+7. Teste AUTO MAPEAR. Agora ele não depende do COM para ler cabeçalhos.
+
+Se qualquer uma dessas etapas exigir PowerShell manual, considerar falha da V2.12.20 e enviar o print/log.

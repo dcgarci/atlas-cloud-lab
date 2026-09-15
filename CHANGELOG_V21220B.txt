@@ -1,0 +1,25 @@
+ATLAS V2.12.20-B — Runtime Autonomy + RTD Orphan Recovery
+Data: 2026-09-15
+
+CORREÇÕES DESTE CHECKPOINT
+- Saneamento automático do padrão órfão validado em campo:
+  EXCEL.EXE -Embedding invisível + profitchart.exe como processo filho.
+- O saneamento é fail-closed: Excel visível do usuário nunca é encerrado.
+- Limpeza executada antes da inicialização do runtime e também no encerramento gerenciado.
+- RTDDialogGuard também limpa o host COM/RTD órfão ao recuperar/encerrar a fonte Profit/Excel.
+- Evita o loop observado onde um Excel COM/DCOM órfão reabria o Profit sozinho após o ATLAS ser fechado.
+
+MANTIDO DA V2.12.20-A
+- Runtime autônomo e troca segura de versões na porta 8000.
+- Instância única e backend validado por versão/origem.
+- Cache/runtime web versionado 21220.
+- AUTO MAPEAR via leitura estática do workbook, sem DispatchEx/Excel oculto.
+
+VALIDAÇÃO AUTOMATIZADA
+- 205 testes aprovados.
+- Novos testes cobrem classificação fail-closed do Excel COM órfão e presença do saneamento nos scripts de start/stop.
+
+VALIDAÇÃO REAL AINDA NECESSÁRIA
+- Windows + Profit + Excel RTD: confirmar que o Profit não reabre sozinho após encerramento do fluxo.
+- REPLAY: conexão, AUTO MAPEAR e retomada após falha.
+- LIVE: validar em mercado aberto.

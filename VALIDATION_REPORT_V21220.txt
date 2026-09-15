@@ -1,0 +1,21 @@
+ATLAS V2.12.20 LAB — RELATÓRIO DE VALIDAÇÃO AUTOMATIZADA
+
+Data: 2026-09-15
+
+VALIDADO SEM DEPENDER DO AMBIENTE DO USUÁRIO
+- Compilação Python do launcher: OK
+- Compilação Python do backend main: OK
+- Suite completa backend: 203 testes aprovados
+- Falhas: 0
+- Teste novo runtime autônomo: OK
+- Teste novo AUTO MAPEAR sem COM: OK
+- Contrato de versão 2.12.20: OK
+- Cache token 21220: OK
+- Proteção contra encerramento de processo de terceiro: implementada
+- Limpeza de backend ATLAS duplicado/orfão: implementada
+
+OBSERVAÇÃO
+O frontend não foi recompilado neste ambiente Linux porque o pacote contém node_modules preparado para Windows e o Rollup nativo do Linux não está presente. O pacote mantém o fluxo oficial PREPARAR_ATLAS.bat, que recompila frontend no Windows antes do primeiro uso da V2.12.20.
+
+WARNINGS DA SUITE
+Há warnings esperados de depreciação FastAPI/SQLAlchemy e de pythoncom ausente no Linux. Esses warnings não produziram falhas de teste.

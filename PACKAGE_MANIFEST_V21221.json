@@ -1,0 +1,19 @@
+{
+  "version": "2.12.21",
+  "build": "LIVE_OPERATIONAL_ORT_DECISION_HARDENING",
+  "runtime_token": "21221",
+  "base": "2.12.20-B_REV3",
+  "live_operation": true,
+  "historical_5d": true,
+  "structural_tops_bottoms": true,
+  "copy_trader_preserved": true,
+  "copy_trader_live_execution": false,
+  "replay_runtime": false,
+  "replay_excel": false,
+  "dual_excel_auto_detect": false,
+  "live_excel_transport": true,
+  "manual_profit_execution": true,
+  "python_tests_passed": 212,
+  "typescript_check": "PASS",
+  "windows_live_validation": "PENDING"
+}

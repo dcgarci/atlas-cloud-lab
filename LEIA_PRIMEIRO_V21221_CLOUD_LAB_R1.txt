@@ -1,0 +1,40 @@
+ATLAS V2.12.21 CLOUD LAB R1 — CLOUD LAB FOUNDATION
+Data: 15/09/2026
+
+OBJETIVO
+- Preservar integralmente a V2.12.21 operacional local.
+- Adicionar fundação de hospedagem sem expor Profit, Excel, RTD ou portas Windows.
+- Manter o frontend visual existente como base oficial.
+
+ARQUITETURA
+- Cloudflare Pages: frontend Vite/React.
+- Render: ATLAS Cloud Gateway.
+- Supabase: base PostgreSQL preparada por migration SQL.
+- Windows: backend operacional atual + ATLAS Local Agent.
+
+SEGURANÇA DO LAB
+- Agent inicia conexão de saída para o Cloud Gateway.
+- Nenhuma porta de entrada precisa ser aberta no Windows.
+- Gateway fica fail-closed quando Agent está offline.
+- Execução LIVE remota NÃO foi habilitada nesta versão.
+- Comandos operacionais continuam sob o núcleo local já validado.
+
+ARQUIVOS NOVOS
+- cloud/gateway/main.py
+- cloud/agent/atlas_cloud_agent.py
+- cloud/requirements-cloud.txt
+- cloud/.env.example
+- cloud/supabase/migrations/001_cloud_lab.sql
+- render.yaml
+- frontend/.env.cloud.example
+- frontend/public/_redirects
+
+PRÓXIMO CHECKPOINT EXTERNO
+Para publicar, serão necessários:
+1. Repositório GitHub para deploy.
+2. Projeto Render.
+3. Projeto Cloudflare Pages.
+4. Projeto Supabase.
+5. Configuração dos secrets/URLs indicados nos arquivos .env.example.
+
+Até esse checkpoint, o núcleo local permanece utilizável exatamente como antes.

@@ -1,0 +1,26 @@
+ATLAS V2.12.21 — CLOUD LAB R1
+VALIDATION REPORT
+Data: 15/09/2026
+
+BASE VALIDADA
+- Núcleo local: V2.12.21 preservado.
+- VERSION local permanece 2.12.21.
+- Nenhum endpoint operacional existente removido.
+
+TESTES
+- Suite Python existente: PASS.
+- Testes adicionais Cloud Lab: PASS.
+- Total: 217 testes PASS.
+- TypeScript tsc --noEmit: PASS.
+- Cloud Gateway: fail-closed sem Agent confirmado por teste.
+- Credencial inválida de Agent: rejeitada por teste.
+- Local Agent: contrato outbound-only verificado por teste.
+- Execução LIVE remota: ausente/bloqueada nesta revisão.
+
+LIMITAÇÃO DO AMBIENTE DE VALIDAÇÃO
+- Build Vite completo não é executado neste Linux porque o pacote recebido contém node_modules preparado para Windows e binários opcionais Rollup específicos da plataforma.
+- TypeScript foi validado integralmente com tsc --noEmit.
+- O build oficial permanece pelo fluxo Windows já existente na base V2.12.21.
+
+STATUS
+APROVADO PARA CHECKPOINT DE PUBLICAÇÃO CLOUD LAB.

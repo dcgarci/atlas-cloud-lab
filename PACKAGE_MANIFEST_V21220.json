@@ -1,0 +1,13 @@
+{
+  "version": "2.12.20",
+  "checkpoint": "RuntimeAutonomy_AutoMapStatic",
+  "backend_tests_passed": 203,
+  "runtime_token": "21220",
+  "features": [
+    "single_instance_mutex",
+    "safe_old_atlas_backend_replacement",
+    "stale_backend_cleanup",
+    "versioned_browser_runtime",
+    "static_excel_header_discovery_without_com"
+  ]
+}

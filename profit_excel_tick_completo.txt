@@ -1,0 +1,1592 @@
+﻿from __future__ import annotations
+
+import asyncio
+import inspect
+import threading
+import time
+from datetime import datetime, time as dt_time, timedelta
+from pathlib import Path
+from typing import AsyncIterator, Awaitable, Callable
+from zoneinfo import ZoneInfo
+
+from app.market.models import MarketTick
+from app.market.rtd_dialog_guard import RTDDialogGuard
+
+
+StatusCallback = Callable[[str, str | None], Awaitable[None] | None]
+
+
+def normalize_excel_timestamp(value, timezone_name: str) -> str:
+    tz = ZoneInfo(timezone_name)
+
+    if isinstance(value, datetime):
+        dt = value
+
+    elif isinstance(value, dt_time):
+        now = datetime.now(tz)
+        dt = datetime.combine(now.date(), value)
+
+    elif isinstance(value, (int, float)):
+        numeric = float(value)
+
+        if numeric < 0:
+            raise ValueError(
+                "timestamp numÃƒÂ©rico Excel invÃƒÂ¡lido."
+            )
+
+        if numeric < 1:
+            now = datetime.now(tz)
+
+            dt = (
+                datetime.combine(
+                    now.date(),
+                    dt_time.min,
+                )
+                + timedelta(
+                    seconds=numeric * 86400
+                )
+            )
+
+        else:
+            dt = (
+                datetime(1899, 12, 30)
+                + timedelta(days=numeric)
+            )
+
+    else:
+        raw = str(value).strip()
+
+        if not raw:
+            raise ValueError(
+                "timestamp vazio na planilha."
+            )
+
+        try:
+            dt = datetime.fromisoformat(
+                raw.replace(
+                    "Z",
+                    "+00:00",
+                )
+            )
+
+        except ValueError:
+            parsed = None
+
+            for fmt in (
+                "%H:%M:%S.%f",
+                "%H:%M:%S",
+                "%d/%m/%Y",
+                "%Y-%m-%d",
+                "%d/%m/%Y %H:%M:%S",
+                "%d/%m/%Y %H:%M:%S.%f",
+                "%d/%m/%Y %H:%M",
+            ):
+                try:
+                    parsed = datetime.strptime(
+                        raw,
+                        fmt,
+                    )
+                    break
+
+                except ValueError:
+                    pass
+
+            if parsed is None:
+                raise ValueError(
+                    "timestamp Excel nÃƒÂ£o reconhecido: "
+                    f"{raw}"
+                )
+
+            if parsed.year == 1900:
+                now = datetime.now(tz)
+
+                parsed = datetime.combine(
+                    now.date(),
+                    parsed.time(),
+                )
+
+            dt = parsed
+
+    if dt.tzinfo is None:
+        dt = dt.replace(
+            tzinfo=tz
+        )
+
+    else:
+        dt = dt.astimezone(
+            tz
+        )
+
+    return dt.isoformat()
+
+
+def combine_excel_date_time(
+    date_value,
+    time_value,
+    timezone_name: str,
+) -> str:
+    """
+    Combina DATA + HORA do RTD sem depender
+    de uma cÃƒÂ©lula Timestamp manual.
+    """
+
+    date_dt = datetime.fromisoformat(
+        normalize_excel_timestamp(
+            date_value,
+            timezone_name,
+        )
+    )
+
+    time_dt = datetime.fromisoformat(
+        normalize_excel_timestamp(
+            time_value,
+            timezone_name,
+        )
+    )
+
+    combined = date_dt.replace(
+        hour=time_dt.hour,
+        minute=time_dt.minute,
+        second=time_dt.second,
+        microsecond=time_dt.microsecond,
+    )
+
+    return combined.isoformat()
+
+
+def _normalize_header(value) -> str:
+    import unicodedata
+
+    raw = str(
+        value or ""
+    ).strip().lower()
+
+    raw = "".join(
+        c
+        for c in unicodedata.normalize(
+            "NFKD",
+            raw,
+        )
+        if not unicodedata.combining(c)
+    )
+
+    return " ".join(
+        raw
+        .replace("_", " ")
+        .replace("-", " ")
+        .split()
+    )
+
+
+def _excel_col_name(
+    index: int,
+) -> str:
+    out = ""
+    value = int(index)
+
+    while value > 0:
+        value, rem = divmod(
+            value - 1,
+            26,
+        )
+
+        out = (
+            chr(65 + rem)
+            + out
+        )
+
+    return out
+
+
+HEADER_ALIASES = {
+    "date": {
+        "data",
+        "date",
+    },
+
+    "time": {
+        "hora",
+        "hor",
+        "time",
+    },
+
+    "timestamp": {
+        "timestamp",
+        "data hora",
+        "data/hora",
+    },
+
+    "price": {
+        "ultimo",
+        "preco",
+        "last",
+        "last price",
+    },
+
+    "volume": {
+        "volume",
+        "volume financeiro",
+    },
+
+    "bid": {
+        "of. compra",
+        "of compra",
+        "oferta compra",
+        "bid",
+    },
+
+    "ask": {
+        "of. venda",
+        "of venda",
+        "oferta venda",
+        "ask",
+    },
+
+    "vwap": {
+        "vwap",
+    },
+
+    "vwap_mean": {
+        "vwap media",
+        "vwap mÃƒÂ©dia",
+    },
+
+    "vwap_weekly": {
+        "vwap semanal",
+    },
+}
+
+
+def resolve_profit_excel_headers(
+    headers: list,
+    *,
+    data_row: int = 2,
+) -> dict[str, str]:
+
+    mapping: dict[str, str] = {}
+
+    for col, value in enumerate(
+        headers,
+        start=1,
+    ):
+        header = _normalize_header(
+            value
+        )
+
+        if not header:
+            continue
+
+        for (
+            key,
+            aliases,
+        ) in HEADER_ALIASES.items():
+
+            normalized_aliases = {
+                _normalize_header(x)
+                for x in aliases
+            }
+
+            if (
+                header in normalized_aliases
+                and key not in mapping
+            ):
+                mapping[key] = (
+                    f"{_excel_col_name(col)}"
+                    f"{data_row}"
+                )
+
+    return mapping
+
+
+def discover_profit_excel_mapping(
+    workbook: str,
+    sheet: str,
+) -> dict:
+
+    probe = ProfitExcelTickSource(
+        workbook=workbook,
+        sheet=sheet,
+        symbol="WINV26",
+        cells={
+            "timestamp": "A2",
+            "price": "A2",
+        },
+        volume_mode="NONE",
+    )
+
+    excel = None
+    book = None
+    page = None
+
+    try:
+        (
+            excel,
+            book,
+            page,
+        ) = probe._open()
+
+        used_cols = min(
+            max(
+                int(
+                    page
+                    .UsedRange
+                    .Columns
+                    .Count
+                ),
+                1,
+            ),
+            160,
+        )
+
+        best: dict[str, str] = {}
+        best_row = 1
+
+        for header_row in range(
+            1,
+            4,
+        ):
+            headers = [
+                page.Cells(
+                    header_row,
+                    col,
+                ).Value
+                for col in range(
+                    1,
+                    used_cols + 1,
+                )
+            ]
+
+            candidate = (
+                resolve_profit_excel_headers(
+                    headers,
+                    data_row=header_row + 1,
+                )
+            )
+
+            if (
+                len(candidate)
+                > len(best)
+            ):
+                best = candidate
+                best_row = header_row
+
+        if "price" not in best:
+            raise ValueError(
+                "NÃƒÂ£o encontrei o cabeÃƒÂ§alho "
+                "de preÃƒÂ§o/ÃƒÅ¡ltimo na planilha."
+            )
+
+        if (
+            "timestamp" not in best
+            and not (
+                {"date", "time"}
+                <= set(best)
+            )
+        ):
+            raise ValueError(
+                "NÃƒÂ£o encontrei Timestamp "
+                "nem o par Data + Hora "
+                "na planilha."
+            )
+
+        return {
+            "header_row": best_row,
+            "cells": best,
+        }
+
+    finally:
+        probe._release(
+            excel,
+            book,
+        )
+
+
+class ProfitExcelTickSource:
+    """
+    Fonte Profit / Excel resiliente.
+
+    V2.12.20 - RTD HARDENING
+
+    Regras:
+
+    - COM roda em thread dedicada.
+    - ATLAS nÃƒÂ£o usa DispatchEx.
+    - ATLAS nÃƒÂ£o cria Excel oculto.
+    - O workbook LIVE ou REPLAY selecionado pelo ATLAS deve estar aberto.
+    - O workbook exato Ã© identificado diretamente pelo caminho configurado.
+    - Planilhas pessoais nÃƒÂ£o sÃƒÂ£o usadas como origem.
+    - RTD Dialog Guard realiza recuperaÃƒÂ§ÃƒÂ£o externa.
+    - ReconexÃƒÂ£o automÃƒÂ¡tica permanece disponÃƒÂ­vel.
+    """
+
+    def __init__(
+        self,
+        workbook: str,
+        sheet: str,
+        symbol: str,
+        cells: dict[str, str],
+        *,
+        poll_ms: int = 250,
+        timezone: str = "America/Sao_Paulo",
+        volume_mode: str = "CUMULATIVE",
+        status_callback: StatusCallback | None = None,
+        read_retries: int = 4,
+        reconnect_backoff_seconds: float = 3.0,
+        connect_timeout_seconds: float = 6.0,
+        watchdog_seconds: float = 8.0,
+    ):
+
+        self.workbook_path = str(
+            Path(
+                workbook
+            ).expanduser()
+        )
+
+        self.sheet_name = sheet
+
+        self.symbol = (
+            symbol.upper()
+        )
+
+        self.cells = {
+            k.lower(): v
+            for k, v in cells.items()
+        }
+
+        self.poll_ms = max(
+            100,
+            int(poll_ms),
+        )
+
+        self.timezone = timezone
+
+        self.volume_mode = (
+            volume_mode.upper()
+        )
+
+        self.closed = False
+
+        self.last_signature = None
+
+        self._last_cumulative_volume: (
+            float | None
+        ) = None
+
+        self._last_tick_ts: (
+            str | None
+        ) = None
+
+        self._owns_excel = False
+        self._owns_workbook = False
+
+        self._status_callback = (
+            status_callback
+        )
+
+        self.read_retries = max(
+            1,
+            int(read_retries),
+        )
+
+        self.reconnect_backoff_seconds = max(
+            0.1,
+            float(
+                reconnect_backoff_seconds
+            ),
+        )
+
+        self.connect_timeout_seconds = max(
+            1.0,
+            float(
+                connect_timeout_seconds
+            ),
+        )
+
+        self.watchdog_seconds = max(
+            2.0,
+            float(watchdog_seconds),
+        )
+
+        self._stop_event = (
+            threading.Event()
+        )
+
+        self._worker: (
+            threading.Thread | None
+        ) = None
+
+        # ====================================================
+        # RTD DIALOG GUARD
+        # ====================================================
+
+        self._rtd_dialog_guard = (
+            RTDDialogGuard(
+                workbook_path=(
+                    self.workbook_path
+                ),
+                interval_seconds=0.25,
+            )
+        )
+
+        if not self.cells.get(
+            "price"
+        ):
+            raise ValueError(
+                "cells deve mapear price."
+            )
+
+        has_timestamp = bool(
+            self.cells.get(
+                "timestamp"
+            )
+        )
+
+        has_date_time = (
+            bool(
+                self.cells.get(
+                    "date"
+                )
+            )
+            and bool(
+                self.cells.get(
+                    "time"
+                )
+            )
+        )
+
+        if (
+            not has_timestamp
+            and not has_date_time
+        ):
+            raise ValueError(
+                "cells deve mapear timestamp "
+                "ou o par date + time."
+            )
+
+        if self.volume_mode not in {
+            "CUMULATIVE",
+            "DELTA",
+            "NONE",
+        }:
+            raise ValueError(
+                "volume_mode deve ser "
+                "CUMULATIVE, DELTA ou NONE."
+            )
+
+    # ========================================================
+    # STATUS
+    # ========================================================
+
+    async def _status(
+        self,
+        event: str,
+        message: str | None = None,
+    ):
+
+        if (
+            self._status_callback
+            is None
+        ):
+            return
+
+        try:
+            result = (
+                self._status_callback(
+                    event,
+                    message,
+                )
+            )
+
+            if inspect.isawaitable(
+                result
+            ):
+                await result
+
+        except Exception:
+            pass
+
+    # ========================================================
+    # WORKBOOK MATCH
+    # ========================================================
+
+    def _same_workbook(
+        self,
+        item,
+        target: Path,
+    ) -> bool:
+
+        try:
+            full = Path(
+                str(
+                    item.FullName
+                )
+            ).resolve()
+
+            if (
+                str(full).lower()
+                == str(target).lower()
+            ):
+                return True
+
+        except Exception:
+            pass
+
+        try:
+            return (
+                str(
+                    item.Name
+                )
+                .strip()
+                .lower()
+                == target.name.lower()
+            )
+
+        except Exception:
+            return False
+
+    # ========================================================
+    # OPEN
+    #
+    # CORREÃƒâ€¡ÃƒÆ’O PRINCIPAL:
+    #
+    # NÃƒÆ’O USAR:
+    # GetActiveObject("Excel.Application")
+    #
+    # porque uma planilha aleatÃƒÂ³ria pode ser
+    # a instÃƒÂ¢ncia Excel registrada como ativa.
+    #
+    # Agora localizamos primeiro o processo que contÃƒÂ©m
+    # Roteamento.xlsm e depois obtemos diretamente
+    # o objeto COM do arquivo Roteamento.xlsm.
+    # ========================================================
+
+    def _open(self):
+        """
+        ObtÃ©m diretamente o workbook exato configurado pelo ATLAS.
+
+        V2.12.20 AUTO LIVE/REPLAY:
+        - nÃ£o depende da linha de comando do EXCEL.EXE;
+        - nÃ£o usa DispatchEx;
+        - nÃ£o cria Excel oculto;
+        - usa GetObject(caminho_exato) para anexar ao workbook jÃ¡ aberto;
+        - valida o workbook e a aba antes de iniciar a leitura.
+        """
+
+        try:
+            import win32com.client  # type: ignore
+
+        except ImportError as exc:
+            raise RuntimeError(
+                "Conector Profit/Excel requer "
+                "pywin32 no Windows."
+            ) from exc
+
+        target = Path(
+            self.workbook_path
+        ).resolve()
+
+        if not target.exists():
+            raise FileNotFoundError(
+                "planilha nÃ£o encontrada: "
+                f"{target}"
+            )
+
+        self._owns_excel = False
+        self._owns_workbook = False
+
+        # ----------------------------------------------------
+        # 1. OBTER DIRETAMENTE O WORKBOOK EXATO
+        # ----------------------------------------------------
+
+        try:
+            workbook = (
+                win32com.client.GetObject(
+                    str(target)
+                )
+            )
+
+        except Exception as exc:
+            raise RuntimeError(
+                "ROUTING_WORKBOOK_NOT_AVAILABLE: "
+                f"'{target.name}' nÃ£o estÃ¡ acessÃ­vel pelo Excel/COM. "
+                "Confirme que esse workbook estÃ¡ aberto no Excel."
+            ) from exc
+
+        # ----------------------------------------------------
+        # 2. PEGAR O EXCEL PROPRIETÃRIO DO WORKBOOK
+        # ----------------------------------------------------
+
+        try:
+            excel = (
+                workbook.Application
+            )
+
+        except Exception as exc:
+            raise RuntimeError(
+                "ROUTING_EXCEL_COM_INVALID: "
+                "nÃ£o foi possÃ­vel localizar "
+                "a instÃ¢ncia Excel proprietÃ¡ria de "
+                f"'{target.name}'."
+            ) from exc
+
+        # ----------------------------------------------------
+        # 3. VALIDAR WORKBOOK EXATO
+        # ----------------------------------------------------
+
+        if not self._same_workbook(
+            workbook,
+            target,
+        ):
+            raise RuntimeError(
+                "ROUTING_WORKBOOK_MISMATCH: "
+                "o COM retornou uma planilha diferente de "
+                f"'{target.name}'."
+            )
+
+        self._owns_excel = False
+        self._owns_workbook = False
+
+        # ----------------------------------------------------
+        # 4. VALIDAR ABA
+        # ----------------------------------------------------
+
+        try:
+            sheet = (
+                workbook.Worksheets(
+                    self.sheet_name
+                )
+            )
+
+        except Exception as exc:
+            raise RuntimeError(
+                "ROUTING_SHEET_NOT_FOUND: "
+                f"aba '{self.sheet_name}' "
+                "nÃ£o encontrada em "
+                f"'{target.name}'."
+            ) from exc
+
+        return (
+            excel,
+            workbook,
+            sheet,
+        )
+
+    # ========================================================
+    # VALUE
+    # ========================================================
+
+    def _value(
+        self,
+        sheet,
+        key: str,
+    ):
+
+        cell = self.cells.get(
+            key
+        )
+
+        if not cell:
+            return None
+
+        return (
+            sheet.Range(
+                cell
+            ).Value
+        )
+
+    # ========================================================
+    # VOLUME
+    # ========================================================
+
+    def _volume_delta(
+        self,
+        raw,
+    ) -> float:
+
+        if (
+            self.volume_mode
+            == "NONE"
+        ):
+            return 0.0
+
+        if raw is None or raw == "":
+            return 0.0
+
+        value = max(
+            0.0,
+            float(raw),
+        )
+
+        if (
+            self.volume_mode
+            == "DELTA"
+        ):
+            return value
+
+        previous = (
+            self._last_cumulative_volume
+        )
+
+        self._last_cumulative_volume = (
+            value
+        )
+
+        if previous is None:
+            return 0.0
+
+        if value >= previous:
+            return (
+                value
+                - previous
+            )
+
+        return value
+
+    # ========================================================
+    # TIMESTAMP
+    # ========================================================
+
+    def _read_market_timestamp(
+        self,
+        sheet,
+    ) -> str:
+
+        if (
+            self.cells.get("date")
+            and self.cells.get("time")
+        ):
+            return (
+                combine_excel_date_time(
+                    self._value(
+                        sheet,
+                        "date",
+                    ),
+                    self._value(
+                        sheet,
+                        "time",
+                    ),
+                    self.timezone,
+                )
+            )
+
+        return (
+            normalize_excel_timestamp(
+                self._value(
+                    sheet,
+                    "timestamp",
+                ),
+                self.timezone,
+            )
+        )
+
+    # ========================================================
+    # SNAPSHOT
+    # ========================================================
+
+    def _raw_snapshot(
+        self,
+        sheet,
+    ):
+
+        ts_before = (
+            self._read_market_timestamp(
+                sheet
+            )
+        )
+
+        price = self._value(
+            sheet,
+            "price",
+        )
+
+        volume = self._value(
+            sheet,
+            "volume",
+        )
+
+        bid = self._value(
+            sheet,
+            "bid",
+        )
+
+        ask = self._value(
+            sheet,
+            "ask",
+        )
+
+        ts_after = (
+            self._read_market_timestamp(
+                sheet
+            )
+        )
+
+        if (
+            ts_before
+            != ts_after
+        ):
+            raise RuntimeError(
+                "snapshot Excel mudou "
+                "durante a leitura; repetindo."
+            )
+
+        if price in (
+            None,
+            "",
+        ):
+            raise ValueError(
+                "preÃƒÂ§o vazio na planilha."
+            )
+
+        return (
+            ts_before,
+            price,
+            volume,
+            bid,
+            ask,
+        )
+
+    # ========================================================
+    # BUILD TICK
+    # ========================================================
+
+    def _build_tick(
+        self,
+        snapshot,
+    ) -> tuple[
+        MarketTick,
+        tuple,
+    ]:
+
+        (
+            ts,
+            price_raw,
+            volume_raw,
+            bid_raw,
+            ask_raw,
+        ) = snapshot
+
+        if (
+            self._last_tick_ts
+            is not None
+            and ts
+            < self._last_tick_ts
+        ):
+            self._last_cumulative_volume = (
+                None
+            )
+
+            self.last_signature = (
+                None
+            )
+
+        self._last_tick_ts = ts
+
+        volume = (
+            self._volume_delta(
+                volume_raw
+            )
+        )
+
+        tick = MarketTick(
+            ts=ts,
+            symbol=self.symbol,
+            price=float(
+                price_raw
+            ),
+            volume=volume,
+            bid=(
+                None
+                if bid_raw in (
+                    None,
+                    "",
+                )
+                else float(
+                    bid_raw
+                )
+            ),
+            ask=(
+                None
+                if ask_raw in (
+                    None,
+                    "",
+                )
+                else float(
+                    ask_raw
+                )
+            ),
+            source="PROFIT_EXCEL",
+        )
+
+        signature = (
+            ts,
+
+            float(
+                price_raw
+            ),
+
+            (
+                None
+                if volume_raw
+                in (
+                    None,
+                    "",
+                )
+                else float(
+                    volume_raw
+                )
+            ),
+
+            (
+                None
+                if bid_raw
+                in (
+                    None,
+                    "",
+                )
+                else float(
+                    bid_raw
+                )
+            ),
+
+            (
+                None
+                if ask_raw
+                in (
+                    None,
+                    "",
+                )
+                else float(
+                    ask_raw
+                )
+            ),
+        )
+
+        return (
+            tick,
+            signature,
+        )
+
+    # ========================================================
+    # READ RETRY
+    # ========================================================
+
+    def _read_with_retry_sync(
+        self,
+        sheet,
+    ) -> tuple[
+        MarketTick,
+        tuple,
+    ]:
+
+        last_exc: (
+            Exception | None
+        ) = None
+
+        for attempt in range(
+            self.read_retries
+        ):
+            try:
+                return (
+                    self._build_tick(
+                        self._raw_snapshot(
+                            sheet
+                        )
+                    )
+                )
+
+            except Exception as exc:
+                last_exc = exc
+
+                if (
+                    attempt + 1
+                    >= self.read_retries
+                ):
+                    break
+
+                try:
+                    import pythoncom  # type: ignore
+
+                    pythoncom.PumpWaitingMessages()
+
+                except Exception:
+                    pass
+
+                time.sleep(
+                    0.05
+                    * (
+                        attempt + 1
+                    )
+                )
+
+        assert last_exc is not None
+
+        raise last_exc
+
+    async def _read_with_retry(
+        self,
+        sheet,
+    ) -> tuple[
+        MarketTick,
+        tuple,
+    ]:
+
+        return await asyncio.to_thread(
+            self._read_with_retry_sync,
+            sheet,
+        )
+
+    # ========================================================
+    # RELEASE
+    # ========================================================
+
+    def _release(
+        self,
+        excel,
+        workbook,
+    ):
+
+        if (
+            workbook is not None
+            and self._owns_workbook
+        ):
+            try:
+                workbook.Close(
+                    SaveChanges=False
+                )
+
+            except Exception:
+                pass
+
+        if (
+            excel is not None
+            and self._owns_excel
+        ):
+            try:
+                excel.Quit()
+
+            except Exception:
+                pass
+
+        self._owns_workbook = False
+        self._owns_excel = False
+
+    # ========================================================
+    # QUEUE EMIT
+    # ========================================================
+
+    @staticmethod
+    def _emit(
+        loop: asyncio.AbstractEventLoop,
+        queue: asyncio.Queue,
+        item,
+    ):
+
+        def put():
+            try:
+                queue.put_nowait(
+                    item
+                )
+
+            except Exception:
+                pass
+
+        try:
+            loop.call_soon_threadsafe(
+                put
+            )
+
+        except RuntimeError:
+            pass
+
+    # ========================================================
+    # WORKER COM
+    # ========================================================
+
+    def _worker_main(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        queue: asyncio.Queue,
+    ):
+
+        excel = None
+        workbook = None
+        sheet = None
+
+        try:
+            import pythoncom  # type: ignore
+
+            pythoncom.CoInitialize()
+
+        except Exception as exc:
+            self._emit(
+                loop,
+                queue,
+                (
+                    "fatal",
+                    (
+                        "pywin32/COM "
+                        f"indisponÃƒÂ­vel: {exc}"
+                    ),
+                    None,
+                ),
+            )
+
+            return
+
+        backoff = (
+            self.reconnect_backoff_seconds
+        )
+
+        try:
+            while (
+                not self._stop_event.is_set()
+            ):
+                excel = None
+                workbook = None
+                sheet = None
+
+                self._emit(
+                    loop,
+                    queue,
+                    (
+                        "status",
+                        "connecting",
+                        None,
+                    ),
+                )
+
+                try:
+                    (
+                        excel,
+                        workbook,
+                        sheet,
+                    ) = self._open()
+
+                    # Sempre forÃƒÂ§a nova assinatura
+                    # ao obter um workbook novo.
+                    self.last_signature = None
+
+                    self._emit(
+                        loop,
+                        queue,
+                        (
+                            "status",
+                            "connected",
+                            None,
+                        ),
+                    )
+
+                    backoff = (
+                        self.reconnect_backoff_seconds
+                    )
+
+                    while (
+                        not self._stop_event.is_set()
+                    ):
+                        try:
+                            (
+                                tick,
+                                signature,
+                            ) = (
+                                self._read_with_retry_sync(
+                                    sheet
+                                )
+                            )
+
+                            self._emit(
+                                loop,
+                                queue,
+                                (
+                                    "status",
+                                    "poll_ok",
+                                    None,
+                                ),
+                            )
+
+                            if (
+                                signature
+                                != self.last_signature
+                            ):
+                                self.last_signature = (
+                                    signature
+                                )
+
+                                self._emit(
+                                    loop,
+                                    queue,
+                                    (
+                                        "tick",
+                                        tick,
+                                        None,
+                                    ),
+                                )
+
+                        except Exception as exc:
+                            self._emit(
+                                loop,
+                                queue,
+                                (
+                                    "status",
+                                    "read_error",
+                                    str(exc),
+                                ),
+                            )
+
+                            raise
+
+                        self._stop_event.wait(
+                            self.poll_ms
+                            / 1000.0
+                        )
+
+                except Exception as exc:
+                    if (
+                        self._stop_event.is_set()
+                    ):
+                        break
+
+                    self._emit(
+                        loop,
+                        queue,
+                        (
+                            "status",
+                            "reconnecting",
+                            str(exc),
+                        ),
+                    )
+
+                    self._release(
+                        excel,
+                        workbook,
+                    )
+
+                    excel = None
+                    workbook = None
+                    sheet = None
+
+                    self._stop_event.wait(
+                        backoff
+                    )
+
+                    backoff = min(
+                        5.0,
+                        backoff * 1.7,
+                    )
+
+                finally:
+                    self._release(
+                        excel,
+                        workbook,
+                    )
+
+        finally:
+            try:
+                pythoncom.CoUninitialize()
+
+            except Exception:
+                pass
+
+            self._emit(
+                loop,
+                queue,
+                (
+                    "done",
+                    None,
+                    None,
+                ),
+            )
+
+    # ========================================================
+    # STREAM
+    # ========================================================
+
+    async def stream(
+        self,
+    ) -> AsyncIterator[MarketTick]:
+
+        self.closed = False
+
+        self._stop_event.clear()
+
+        self._rtd_dialog_guard.start()
+
+        loop = (
+            asyncio.get_running_loop()
+        )
+
+        queue: asyncio.Queue = (
+            asyncio.Queue()
+        )
+
+        self._worker = threading.Thread(
+            target=self._worker_main,
+            args=(
+                loop,
+                queue,
+            ),
+            name=(
+                "ATLAS-ExcelCOM-"
+                f"{self.symbol}"
+            ),
+            daemon=True,
+        )
+
+        self._worker.start()
+
+        connected = False
+
+        connecting_since = (
+            loop.time()
+        )
+
+        last_worker_event = (
+            loop.time()
+        )
+
+        timeout_reported = False
+        watchdog_reported = False
+
+        try:
+            while not self.closed:
+                try:
+                    (
+                        kind,
+                        payload,
+                        extra,
+                    ) = await asyncio.wait_for(
+                        queue.get(),
+                        timeout=0.5,
+                    )
+
+                    last_worker_event = (
+                        loop.time()
+                    )
+
+                    watchdog_reported = (
+                        False
+                    )
+
+                except asyncio.TimeoutError:
+                    now = (
+                        loop.time()
+                    )
+
+                    if (
+                        not connected
+                        and not timeout_reported
+                        and (
+                            now
+                            - connecting_since
+                            >= self.connect_timeout_seconds
+                        )
+                    ):
+                        timeout_reported = True
+
+                        await self._status(
+                            "connect_timeout",
+                            (
+                                "Excel/COM nÃƒÂ£o respondeu em "
+                                f"{self.connect_timeout_seconds:.0f}s; "
+                                "API permanece ativa."
+                            ),
+                        )
+
+                    elif (
+                        connected
+                        and not watchdog_reported
+                        and (
+                            now
+                            - last_worker_event
+                            >= self.watchdog_seconds
+                        )
+                    ):
+                        watchdog_reported = True
+
+                        await self._status(
+                            "watchdog_timeout",
+                            (
+                                "Excel/COM sem resposta hÃƒÂ¡ "
+                                f"{self.watchdog_seconds:.0f}s; "
+                                "aguardando recuperaÃƒÂ§ÃƒÂ£o."
+                            ),
+                        )
+
+                    if (
+                        self._worker
+                        is not None
+                        and not self._worker.is_alive()
+                    ):
+                        break
+
+                    continue
+
+                if kind == "status":
+                    event = payload
+                    message = extra
+
+                    if event == "connecting":
+                        connected = False
+
+                        connecting_since = (
+                            loop.time()
+                        )
+
+                        timeout_reported = (
+                            False
+                        )
+
+                    elif event == "connected":
+                        connected = True
+
+                        timeout_reported = (
+                            False
+                        )
+
+                    elif event == "reconnecting":
+                        connected = False
+
+                        connecting_since = (
+                            loop.time()
+                        )
+
+                        timeout_reported = (
+                            False
+                        )
+
+                    await self._status(
+                        event,
+                        message,
+                    )
+
+                elif kind == "tick":
+                    yield payload
+
+                elif kind == "fatal":
+                    await self._status(
+                        "worker_error",
+                        str(payload),
+                    )
+
+                    break
+
+                elif kind == "done":
+                    break
+
+        finally:
+            self.closed = True
+
+            self._stop_event.set()
+
+            self._rtd_dialog_guard.stop()
+
+    # ========================================================
+    # CLOSE
+    # ========================================================
+
+    async def close(self):
+        self.closed = True
+
+        self._stop_event.set()
+
+        self._rtd_dialog_guard.stop()
+

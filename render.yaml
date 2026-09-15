@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: atlas-cloud-lab-gateway
+    runtime: python
+    plan: free
+    rootDir: cloud
+    buildCommand: pip install -r requirements-cloud.txt
+    startCommand: uvicorn gateway.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: ATLAS_CLOUD_AGENT_TOKEN
+        sync: false
+      - key: ATLAS_CLOUD_AGENT_ID
+        value: atlas-lab-01
+      - key: ATLAS_CLOUD_ALLOWED_ORIGINS
+        sync: false
+      - key: ATLAS_CLOUD_RPC_TIMEOUT
+        value: "15"

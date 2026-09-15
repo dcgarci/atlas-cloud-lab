@@ -1,0 +1,22 @@
+ATLAS V2.12.20 LAB — Historical 5D + Navigation UX + Copy Trader UI
+Data: 14/09/2026
+
+ENTREGUE NESTA VERSAO
+- Historico operacional limitado aos 5 pregoes anteriores; banco preserva todo o historico.
+- Importacao historica reconcilia market_candles com market_sessions_v2 via rebuild_session().
+- Base real WINV26 incluida no banco: 565 candles, 5 sessoes, 113 candles por pregao, 0 gaps.
+- Bloqueio fail-safe LIVE + REPLAY simultaneos (PROFIT_EXCEL_MODE_AMBIGUOUS).
+- Bloqueio quando nenhuma planilha de roteamento esta aberta (PROFIT_EXCEL_MODE_NOT_DETECTED).
+- Menu COCKPIT ATLAS reposicionado no centro da barra principal.
+- COPY TRADER PROFIT renomeado e destacado em azul.
+- Ponteiro verde ATLAS sobre a area do grafico.
+- CTRL sobre o grafico ativa temporariamente a ferramenta MAO/PAN; ao soltar CTRL retorna a ferramenta anterior.
+
+PENDENCIAS CONHECIDAS / NAO BLOQUEANTES PARA ESTE BUILD DE TESTE
+- AUTO MAPEAR REPLAY: corrigir anexacao COM (ROUTING_WORKBOOK_NOT_AVAILABLE).
+- Validacao LIVE em mercado aberto: LIVE / WINV26_F_0 / TRANSPORTE CONNECTED.
+- Recovery completo de falha RTD/Excel, incluindo popup RTD.
+- Regressao final Copy Trader: deteccao, ARM/DISARM, BUY, SELL, REVERSE, FLATTEN, duplicidade, limpar log.
+- Validacao final de perda e retorno de comunicacao.
+- Instalador portatil e remocao dos caminhos fixos C:\ATLAS DADOS.
+- Acabamento final do Cockpit Profit fica para a etapa posterior.

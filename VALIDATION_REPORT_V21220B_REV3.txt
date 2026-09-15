@@ -1,0 +1,14 @@
+ATLAS V2.12.20-B REV3 — RTD NO-DATA HARDENING
+Data: 2026-09-15
+
+Validação automatizada no ambiente de build:
+- Backend: 208 testes aprovados, 0 falhas.
+- TypeScript: tsc -b aprovado.
+- Build Vite completo não executado no ambiente Linux do empacotamento porque o node_modules incluído é Windows e o pacote opcional nativo do Rollup Linux não está presente. O pacote mantém frontend/dist ausente para que PREPARAR_ATLAS.bat compile no Windows do usuário, fluxo já validado na REV2.
+
+Correção principal:
+- Excel RTD retornando #N/D não causa mais EXCEL_RECONNECT nem erro "timestamp numérico Excel inválido".
+- Transport permanece CONNECTED.
+- Mercado fica SEM DADOS / STALE, sinais congelados.
+- Modo LIVE ou REPLAY permanece explícito.
+- Polling continua aguardando retorno do RTD sem reiniciar Excel.

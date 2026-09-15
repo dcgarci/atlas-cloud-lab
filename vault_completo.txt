@@ -1,0 +1,733 @@
+﻿from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Iterable
+import csv
+import io
+import re
+import unicodedata
+import uuid
+
+from sqlalchemy import delete, func, select
+
+from app.db.base import SessionLocal
+from app.db.models import MarketCandleORM, MarketTickORM
+from app.market.models import MarketTick
+from app.market.live_candle_builder import LiveCandleBuilder
+from app.session.calendar import localize, session_id_for
+
+
+def _dt(ts: str) -> datetime:
+    return localize(datetime.fromisoformat(ts.replace("Z", "+00:00")))
+
+
+def tick_session_id(tick: MarketTick, timeframe: str) -> str:
+    return session_id_for(tick.symbol, timeframe, _dt(tick.ts))
+
+
+@dataclass(frozen=True)
+class StoredTick:
+    id: int
+    ts: str
+    session_id: str
+    capture_id: str
+    symbol: str
+    price: float
+    volume: float
+    bid: float | None
+    ask: float | None
+    source: str
+
+    def to_market_tick(self) -> MarketTick:
+        return MarketTick(
+            ts=self.ts,
+            symbol=self.symbol,
+            price=self.price,
+            volume=max(0.0, self.volume),
+            bid=self.bid,
+            ask=self.ask,
+            source="ORT_VAULT_REPLAY",
+        )
+
+
+def persist_tick(tick: MarketTick, timeframe: str) -> MarketTickORM:
+    """Persist one unique market update already deduplicated by the source.
+
+    ProfitExcelTickSource only yields when timestamp/price/volume/bid/ask changes,
+    so we intentionally do not run an expensive SELECT before every insert.
+    """
+    session_id = tick_session_id(tick, timeframe)
+
+    with SessionLocal() as db:
+        row = MarketTickORM(
+            ts=tick.ts,
+            session_id=session_id,
+            capture_id="DIRECT",
+            symbol=tick.symbol,
+            price=tick.price,
+            volume=tick.volume,
+            bid=tick.bid,
+            ask=tick.ask,
+            source=tick.source,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
+
+
+def _market_date(session_id: str) -> str:
+    return session_id.split(":", 1)[0]
+
+
+def _normalize_header(value: str) -> str:
+    text = unicodedata.normalize("NFD", str(value or ""))
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    return re.sub(r"[^a-z0-9]+", "_", text.strip().lower()).strip("_")
+
+
+def _number(value: str | int | float | None, *, default: float | None = None) -> float | None:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    raw = str(value).strip().replace(" ", "")
+    if not raw:
+        return default
+    # Brazilian export: 190.622,00 / 1.234 / 12,5
+    if "," in raw and "." in raw:
+        raw = raw.replace(".", "").replace(",", ".")
+    elif "," in raw:
+        raw = raw.replace(",", ".")
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _parse_import_timestamp(row: dict[str, str]) -> str:
+    def first(*names: str) -> str:
+        for name in names:
+            value = str(row.get(name, "") or "").strip()
+            if value:
+                return value
+        return ""
+
+    direct = first("timestamp", "ts", "datetime", "data_hora", "datahora")
+    if not direct:
+        date_part = first("data", "date", "dia")
+        time_part = first("hora", "time", "horario")
+        direct = f"{date_part} {time_part}".strip()
+    if not direct:
+        raise ValueError("CSV sem timestamp/Data+Hora reconhecÃ­vel.")
+
+    value = direct.strip()
+    parsed: datetime | None = None
+    candidates = (
+        "%Y-%m-%dT%H:%M:%S.%f%z",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S",
+        "%d/%m/%Y %H:%M:%S.%f",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d-%m-%Y %H:%M:%S",
+    )
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        for fmt in candidates:
+            try:
+                parsed = datetime.strptime(value, fmt)
+                break
+            except ValueError:
+                continue
+    if parsed is None:
+        raise ValueError(f"Timestamp invÃ¡lido no CSV: {value}")
+    return localize(parsed).isoformat()
+
+
+def _field(row: dict[str, str], *names: str) -> str | None:
+    for name in names:
+        value = str(row.get(name, "") or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _infer_timeframe(timestamps: list[str], fallback: str) -> str:
+    if len(timestamps) < 2:
+        return fallback
+    ordered = sorted({_dt(x) for x in timestamps})
+    deltas = [int((b - a).total_seconds()) for a, b in zip(ordered, ordered[1:]) if b > a]
+    if not deltas:
+        return fallback
+    # Profit exports are frequently descending.  The median positive interval
+    # is deterministic and robust to lunch/auction gaps.
+    deltas.sort()
+    seconds = deltas[len(deltas)//2]
+    if seconds >= 3600 and seconds % 3600 == 0:
+        return f"{seconds // 3600}h"
+    if seconds >= 60 and seconds % 60 == 0:
+        return f"{seconds // 60}m"
+    return fallback
+
+
+def import_replay_tick_csv(
+    content: bytes,
+    *,
+    symbol: str,
+    timeframe: str,
+    filename: str = "replay.csv",
+) -> dict:
+    """Import Profit/Excel replay data into the ATLAS vault.
+
+    V2.12.20 accepts two fidelity contracts without fabricating one from the
+    other:
+
+    * TICK_REAL: Data/Hora + Ultimo/Preco (+ Quantidade/Bid/Ask when present)
+    * CANDLE_OHLC: Data/Hora + Abertura/Maximo/Minimo/Fechamento/Volume
+
+    Candle imports remain candle replays.  ATLAS never manufactures an
+    intrabar tick path from OHLC.
+    """
+    if len(content) > 150 * 1024 * 1024:
+        raise ValueError("Arquivo de Replay maior que 150 MB.")
+    text = content.decode("utf-8-sig", errors="replace")
+    sample = text[:8192]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+        dialect.delimiter = ";" if sample.count(";") > sample.count(",") else ","
+
+    reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    if not reader.fieldnames:
+        raise ValueError("CSV sem cabeÃ§alho.")
+
+    normalized_fields = {_normalize_header(name): name for name in reader.fieldnames}
+    price_aliases = ("price", "preco", "ultimo", "ultimo_preco", "last", "last_price", "cotacao", "valor", "negocio")
+    open_aliases = ("open", "abertura")
+    high_aliases = ("high", "maximo", "maxima")
+    low_aliases = ("low", "minimo", "minima")
+    close_aliases = ("close", "fechamento", "ultimo", "ultimo_preco")
+    volume_aliases = ("volume", "vol")
+    qty_aliases = ("quantidade", "qtd", "quantity", "negocios")
+    bid_aliases = ("bid", "of_compra", "oferta_compra", "compra", "melhor_compra")
+    ask_aliases = ("ask", "of_venda", "oferta_venda", "venda", "melhor_venda")
+    symbol_aliases = ("ativo", "symbol", "ticker", "contrato")
+
+    has_price = any(name in normalized_fields for name in price_aliases)
+    has_ohlc = all(any(name in normalized_fields for name in group) for group in (open_aliases, high_aliases, low_aliases, close_aliases))
+    if not has_price and not has_ohlc:
+        raise ValueError(
+            "CSV sem formato reconhecÃ­vel. Use Tick (Data, Hora, Ãšltimo) ou Candle OHLC "
+            "(Data, Hora, Abertura, MÃ¡ximo, MÃ­nimo, Fechamento, Volume)."
+        )
+
+    raw_rows = [
+        {_normalize_header(k): str(v or "").strip() for k, v in raw.items() if k is not None}
+        for raw in reader
+    ]
+    symbol_default = symbol.upper().strip() or "WINV26"
+    timeframe_requested = timeframe.lower().strip() or "5m"
+
+    if has_ohlc and not has_price:
+        parsed: list[dict] = []
+        rejected = 0
+        timestamps: list[str] = []
+        for row in raw_rows:
+            try:
+                ts = _parse_import_timestamp(row)
+            except ValueError:
+                rejected += 1
+                continue
+            o = _number(_field(row, *open_aliases))
+            h = _number(_field(row, *high_aliases))
+            l = _number(_field(row, *low_aliases))
+            c = _number(_field(row, *close_aliases))
+            if None in (o, h, l, c) or min(float(o), float(h), float(l), float(c)) <= 0:
+                rejected += 1
+                continue
+            if float(h) < max(float(o), float(c), float(l)) or float(l) > min(float(o), float(c), float(h)):
+                rejected += 1
+                continue
+            row_symbol = (_field(row, *symbol_aliases) or symbol_default).upper().strip()
+            parsed.append({
+                "ts": ts,
+                "symbol": row_symbol,
+                "open": float(o),
+                "high": float(h),
+                "low": float(l),
+                "close": float(c),
+                "volume": max(0.0, float(_number(_field(row, *volume_aliases), default=0.0) or 0.0)),
+                "quantity": max(0.0, float(_number(_field(row, *qty_aliases), default=0.0) or 0.0)),
+            })
+            timestamps.append(ts)
+        if not parsed:
+            raise ValueError("Nenhum candle OHLC vÃ¡lido encontrado no CSV.")
+        parsed.sort(key=lambda x: _dt(x["ts"]))
+        detected_tf = _infer_timeframe(timestamps, timeframe_requested)
+        capture_id = f"OHLC-{uuid.uuid4().hex}"
+        affected_sessions = sorted({session_id_for(x["symbol"], detected_tf, _dt(x["ts"])) for x in parsed})
+        candles = [MarketCandleORM(
+            ts=x["ts"],
+            session_id=session_id_for(x["symbol"], detected_tf, _dt(x["ts"])),
+            symbol=x["symbol"],
+            timeframe=detected_tf,
+            open=x["open"], high=x["high"], low=x["low"], close=x["close"],
+            volume=x["volume"], quantity=x["quantity"],
+            source="CSV_PROFIT_OHLC", fidelity="CANDLE_OHLC",
+        ) for x in parsed]
+        with SessionLocal() as db:
+            for sid in affected_sessions:
+                db.execute(delete(MarketCandleORM).where(MarketCandleORM.session_id == sid))
+            db.add_all(candles)
+            db.commit()
+        dates = sorted({_market_date(sid) for sid in affected_sessions})
+        return {
+            "ok": True,
+            "filename": filename,
+            "fidelity": "CANDLE_OHLC",
+            "replay_mode": "CANDLE",
+            "symbol": parsed[0]["symbol"],
+            "timeframe": detected_tf,
+            "capture_id": capture_id,
+            "ticks_imported": 0,
+            "candles_imported": len(candles),
+            "rows_rejected": rejected,
+            "sessions": len(affected_sessions),
+            "dates": dates,
+            "intrabar_execution": "ESTIMATED_STOP_FIRST",
+        }
+
+    rows: list[MarketTick] = []
+    rejected = 0
+    aliases = {
+        "price": price_aliases,
+        "volume": ("volume", "quantidade", "qtd", "vol"),
+        "bid": bid_aliases,
+        "ask": ask_aliases,
+    }
+    for row in raw_rows:
+        try:
+            ts = _parse_import_timestamp(row)
+        except ValueError:
+            rejected += 1
+            continue
+        price = _number(_field(row, *aliases["price"]))
+        if price is None or price <= 0:
+            rejected += 1
+            continue
+        row_symbol = (_field(row, *symbol_aliases) or symbol_default).upper().strip()
+        rows.append(MarketTick(
+            ts=ts,
+            symbol=row_symbol,
+            price=float(price),
+            volume=max(0.0, float(_number(_field(row, *aliases["volume"]), default=0.0) or 0.0)),
+            bid=_number(_field(row, *aliases["bid"])),
+            ask=_number(_field(row, *aliases["ask"])),
+            source="CSV_IMPORT_REAL",
+        ))
+    if not rows:
+        raise ValueError("Nenhum tick vÃ¡lido encontrado no CSV.")
+    rows.sort(key=lambda tick: _dt(tick.ts))
+    capture_id = f"IMPORT-{uuid.uuid4().hex}"
+    affected_sessions = sorted({tick_session_id(tick, timeframe_requested) for tick in rows})
+    db_rows = [MarketTickORM(
+        ts=tick.ts, session_id=tick_session_id(tick, timeframe_requested), capture_id=capture_id,
+        symbol=tick.symbol, price=tick.price, volume=tick.volume, bid=tick.bid, ask=tick.ask,
+        source="CSV_IMPORT_REAL",
+    ) for tick in rows]
+    builder = LiveCandleBuilder(rows[0].symbol, timeframe_requested)
+    candles: list[MarketCandleORM] = []
+    for tick in rows:
+        finalized, _ = builder.on_tick(tick)
+        if finalized is not None:
+            candles.append(MarketCandleORM(
+                ts=finalized.ts,
+                session_id=session_id_for(finalized.symbol, timeframe_requested, _dt(finalized.ts)),
+                symbol=finalized.symbol, timeframe=timeframe_requested,
+                open=finalized.open, high=finalized.high, low=finalized.low, close=finalized.close,
+                volume=finalized.volume, quantity=0, source="CSV_IMPORT_REAL", fidelity="DERIVED_FROM_TICKS",
+            ))
+    final = builder.finalize_current()
+    if final is not None:
+        candles.append(MarketCandleORM(
+            ts=final.ts, session_id=session_id_for(final.symbol, timeframe_requested, _dt(final.ts)),
+            symbol=final.symbol, timeframe=timeframe_requested,
+            open=final.open, high=final.high, low=final.low, close=final.close,
+            volume=final.volume, quantity=0, source="CSV_IMPORT_REAL", fidelity="DERIVED_FROM_TICKS",
+        ))
+    with SessionLocal() as db:
+        for i in range(0, len(db_rows), 5000):
+            db.add_all(db_rows[i:i+5000]); db.flush()
+        for sid in affected_sessions:
+            db.execute(delete(MarketCandleORM).where(MarketCandleORM.session_id == sid))
+        db.add_all(candles); db.commit()
+    dates = sorted({_market_date(sid) for sid in affected_sessions})
+    return {
+        "ok": True, "filename": filename, "fidelity": "TICK_REAL", "replay_mode": "TICK",
+        "symbol": rows[0].symbol, "timeframe": timeframe_requested, "capture_id": capture_id,
+        "ticks_imported": len(rows), "candles_imported": len(candles), "rows_rejected": rejected,
+        "sessions": len(affected_sessions), "dates": dates, "intrabar_execution": "EXACT_TICK_PATH",
+    }
+
+def list_sessions(
+    symbol: str | None = None,
+    *,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    limit: int = 100,
+) -> list[dict]:
+    """List logical replay sessions from either tick or candle storage.
+
+    V2.12.20 makes candle-only Profit exports first-class replay sessions.
+    When ticks exist they remain the higher-fidelity source; otherwise the
+    direct OHLC candles are listed with CANDLE_OHLC fidelity.
+    """
+    symbol_norm = symbol.upper() if symbol else None
+    logical: list[dict] = []
+
+    with SessionLocal() as db:
+        tick_sids = set(db.scalars(select(MarketTickORM.session_id).distinct()).all())
+        candle_sids = set(x for x in db.scalars(select(MarketCandleORM.session_id).distinct()).all() if x)
+        all_sids = tick_sids | candle_sids
+
+        for sid in all_sids:
+            d = _market_date(str(sid))
+            if start_date and d < start_date:
+                continue
+            if end_date and d > end_date:
+                continue
+
+            latest_tick = db.scalar(
+                select(MarketTickORM).where(MarketTickORM.session_id == sid).order_by(MarketTickORM.id.desc()).limit(1)
+            )
+            candle_rows = db.scalars(
+                select(MarketCandleORM).where(MarketCandleORM.session_id == sid).order_by(MarketCandleORM.ts.asc(), MarketCandleORM.id.asc())
+            ).all()
+            if latest_tick is not None:
+                if symbol_norm and latest_tick.symbol != symbol_norm:
+                    continue
+                agg = db.execute(
+                    select(
+                        func.count(MarketTickORM.id), func.min(MarketTickORM.ts), func.max(MarketTickORM.ts),
+                        func.min(MarketTickORM.price), func.max(MarketTickORM.price),
+                    ).where(MarketTickORM.session_id == sid, MarketTickORM.capture_id == latest_tick.capture_id)
+                ).one()
+                capture_count = db.scalar(
+                    select(func.count(func.distinct(MarketTickORM.capture_id))).where(MarketTickORM.session_id == sid)
+                ) or 1
+                logical.append({
+                    "session_id": sid,
+                    "market_date": d,
+                    "symbol": latest_tick.symbol,
+                    "capture_id": latest_tick.capture_id,
+                    "capture_count": int(capture_count),
+                    "tick_count": int(agg[0]),
+                    "candle_count": len(candle_rows),
+                    "first_ts": agg[1], "last_ts": agg[2], "low": agg[3], "high": agg[4],
+                    "recorded": True,
+                    "source": latest_tick.source,
+                    "fidelity": "TICK_REAL" if latest_tick.source in {"PROFIT_EXCEL", "CSV_IMPORT_REAL", "ORT_VAULT_REPLAY"} else "CAPTURED",
+                    "replay_mode": "TICK",
+                    "intrabar_execution": "EXACT_TICK_PATH",
+                    "timeframe": str(sid).split(":")[-1] if ":" in str(sid) else "5m",
+                })
+                continue
+
+            if not candle_rows:
+                continue
+            first = candle_rows[0]
+            if symbol_norm and first.symbol != symbol_norm:
+                continue
+            logical.append({
+                "session_id": sid,
+                "market_date": d,
+                "symbol": first.symbol,
+                "capture_id": "CANDLE_DIRECT",
+                "capture_count": 1,
+                "tick_count": 0,
+                "candle_count": len(candle_rows),
+                "first_ts": candle_rows[0].ts,
+                "last_ts": candle_rows[-1].ts,
+                "low": min(float(x.low) for x in candle_rows),
+                "high": max(float(x.high) for x in candle_rows),
+                "recorded": True,
+                "source": getattr(first, "source", None) or "CSV_PROFIT_OHLC",
+                "fidelity": getattr(first, "fidelity", None) or "CANDLE_OHLC",
+                "replay_mode": "CANDLE",
+                "intrabar_execution": "ESTIMATED_STOP_FIRST",
+                "timeframe": first.timeframe,
+            })
+
+    logical.sort(key=lambda x: (x["market_date"], x["session_id"]), reverse=True)
+    return logical[:max(1, min(limit, 500))]
+
+
+def session_replay_mode(session_ids: Iterable[str]) -> str:
+    ids = [x for x in session_ids if x]
+    if not ids:
+        return "NONE"
+    with SessionLocal() as db:
+        tick_sessions = {
+            sid for sid in ids
+            if (db.scalar(select(func.count(MarketTickORM.id)).where(MarketTickORM.session_id == sid)) or 0) > 0
+        }
+        candle_sessions = {
+            sid for sid in ids
+            if (db.scalar(select(func.count(MarketCandleORM.id)).where(MarketCandleORM.session_id == sid)) or 0) > 0
+        }
+    if tick_sessions == set(ids):
+        return "TICK"
+    if not tick_sessions and candle_sessions == set(ids):
+        return "CANDLE"
+    if tick_sessions or candle_sessions:
+        return "MIXED"
+    return "NONE"
+
+
+def load_candles(session_ids: Iterable[str]) -> list[dict]:
+    ids = [x for x in session_ids if x]
+    if not ids:
+        return []
+    result: list[dict] = []
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(MarketCandleORM)
+            .where(MarketCandleORM.session_id.in_(ids))
+            .order_by(MarketCandleORM.ts.asc(), MarketCandleORM.id.asc())
+        ).all()
+        for row in rows:
+            result.append({
+                "id": row.id,
+                "ts": row.ts,
+                "session_id": row.session_id,
+                "symbol": row.symbol,
+                "timeframe": row.timeframe,
+                "open": row.open,
+                "high": row.high,
+                "low": row.low,
+                "close": row.close,
+                "volume": row.volume,
+                "quantity": getattr(row, "quantity", 0.0) or 0.0,
+                "source": getattr(row, "source", "UNKNOWN") or "UNKNOWN",
+                "fidelity": getattr(row, "fidelity", "DERIVED") or "DERIVED",
+            })
+    return result
+
+def load_ticks(session_ids: Iterable[str]) -> list[StoredTick]:
+    ids = [x for x in session_ids if x]
+    if not ids:
+        return []
+
+    result: list[StoredTick] = []
+    with SessionLocal() as db:
+        for sid in ids:
+            latest = db.scalar(
+                select(MarketTickORM)
+                .where(MarketTickORM.session_id == sid)
+                .order_by(MarketTickORM.id.desc())
+                .limit(1)
+            )
+            if latest is None:
+                continue
+            rows = db.scalars(
+                select(MarketTickORM)
+                .where(
+                    MarketTickORM.session_id == sid,
+                    MarketTickORM.capture_id == latest.capture_id,
+                )
+                .order_by(MarketTickORM.ts.asc(), MarketTickORM.id.asc())
+            ).all()
+            result.extend(
+                StoredTick(
+                    id=row.id,
+                    ts=row.ts,
+                    session_id=row.session_id,
+                    capture_id=row.capture_id,
+                    symbol=row.symbol,
+                    price=row.price,
+                    volume=row.volume,
+                    bid=row.bid,
+                    ask=row.ask,
+                    source=row.source,
+                )
+                for row in rows
+            )
+
+    result.sort(key=lambda x: (x.ts, x.id))
+    return result
+
+
+
+def load_recent_candles(
+    symbol: str,
+    timeframe: str,
+    before_ts: str,
+    *,
+    limit: int = 120,
+) -> list[dict]:
+    """Return recent persisted candles from the *same market session* up to before_ts.
+
+    This endpoint is intentionally visual-only.  It is used to seed the chart after
+    a live Profit/Excel connection or reconnect and MUST NOT feed candles back into
+    the deterministic ORT engine.  Filtering by session and by cutoff prevents a
+    previously-recorded full replay from leaking future candles into an earlier
+    replay timestamp.
+    """
+    symbol_norm = symbol.upper().strip()
+    timeframe_norm = timeframe.strip()
+    cutoff = _dt(before_ts)
+    session_id = session_id_for(symbol_norm, timeframe_norm, cutoff)
+    bounded = max(1, min(int(limit), 500))
+
+    with SessionLocal() as db:
+        rows = db.scalars(
+            select(MarketCandleORM)
+            .where(
+                MarketCandleORM.session_id == session_id,
+                MarketCandleORM.symbol == symbol_norm,
+                MarketCandleORM.timeframe == timeframe_norm,
+            )
+            .order_by(MarketCandleORM.ts.asc(), MarketCandleORM.id.asc())
+        ).all()
+
+    tf = timeframe_norm.lower()
+    if tf.endswith("m") and tf[:-1].isdigit():
+        candle_span = timedelta(minutes=int(tf[:-1]))
+    elif tf.endswith("h") and tf[:-1].isdigit():
+        candle_span = timedelta(hours=int(tf[:-1]))
+    else:
+        # Conservative fallback: unknown timeframe must be strictly in the past.
+        candle_span = timedelta(seconds=1)
+
+    # A candle timestamp is its OPEN time.  Requiring its close boundary to be
+    # <= cutoff prevents a previously recorded complete candle from leaking its
+    # future high/low/close while the same candle is still forming in live replay.
+    eligible = [
+        row for row in rows
+        if _dt(row.ts) + candle_span <= cutoff
+    ][-bounded:]
+    return [
+        {
+            "ts": row.ts,
+            "symbol": row.symbol,
+            "timeframe": row.timeframe,
+            "open": row.open,
+            "high": row.high,
+            "low": row.low,
+            "close": row.close,
+            "volume": row.volume,
+            "complete": True,
+            "visual_seed": True,
+        }
+        for row in eligible
+    ]
+
+
+def load_context_candles(
+    symbol: str,
+    timeframe: str,
+    before_ts: str,
+    *,
+    sessions: int = 5,
+    limit_per_session: int = 180,
+) -> list[dict]:
+    """Return visual candles for the replay session plus previous sessions.
+
+    Past sessions may be shown in full because they are already known history.
+    The active session remains strictly bounded by ``before_ts`` and only
+    completed candles are returned, preventing look-ahead while a candle is
+    still forming in Replay/Profit.
+
+    This data is *visual context only* and is never injected into the ORT
+    decision engine.
+    """
+    symbol_norm = symbol.upper().strip()
+    timeframe_norm = timeframe.strip()
+    cutoff = _dt(before_ts)
+    session_count = max(1, min(int(sessions), 10))
+    per_session = max(20, min(int(limit_per_session), 500))
+
+    tf = timeframe_norm.lower()
+    if tf.endswith("m") and tf[:-1].isdigit():
+        candle_span = timedelta(minutes=int(tf[:-1]))
+    elif tf.endswith("h") and tf[:-1].isdigit():
+        candle_span = timedelta(hours=int(tf[:-1]))
+    else:
+        candle_span = timedelta(seconds=1)
+
+    cutoff_date = cutoff.date().isoformat()
+
+    with SessionLocal() as db:
+        session_rows = db.execute(
+            select(
+                MarketCandleORM.session_id,
+                func.min(MarketCandleORM.ts).label("first_ts"),
+            )
+            .where(
+                MarketCandleORM.symbol == symbol_norm,
+                MarketCandleORM.timeframe == timeframe_norm,
+            )
+            .group_by(MarketCandleORM.session_id)
+        ).all()
+
+        candidates = [
+            (str(sid), str(first_ts))
+            for sid, first_ts in session_rows
+            if _market_date(str(sid)) <= cutoff_date
+        ]
+        candidates.sort(key=lambda x: (_market_date(x[0]), x[1]), reverse=True)
+        selected_ids = [sid for sid, _ in candidates[:session_count]]
+
+        result_rows: list[MarketCandleORM] = []
+        for sid in reversed(selected_ids):
+            rows = db.scalars(
+                select(MarketCandleORM)
+                .where(
+                    MarketCandleORM.session_id == sid,
+                    MarketCandleORM.symbol == symbol_norm,
+                    MarketCandleORM.timeframe == timeframe_norm,
+                )
+                .order_by(MarketCandleORM.ts.asc(), MarketCandleORM.id.asc())
+            ).all()
+
+            market_date = _market_date(sid)
+            if market_date == cutoff_date:
+                rows = [row for row in rows if _dt(row.ts) + candle_span <= cutoff]
+            result_rows.extend(rows[-per_session:])
+
+    result_rows.sort(key=lambda row: (_dt(row.ts), row.id))
+    return [
+        {
+            "ts": row.ts,
+            "symbol": row.symbol,
+            "timeframe": row.timeframe,
+            "open": row.open,
+            "high": row.high,
+            "low": row.low,
+            "close": row.close,
+            "volume": row.volume,
+            "complete": True,
+            "visual_seed": True,
+            "market_date": _market_date(row.session_id),
+        }
+        for row in result_rows
+    ]
+
+def vault_summary(symbol: str | None = None) -> dict:
+    sessions = list_sessions(symbol, limit=500)
+    return {
+        "symbol": symbol.upper() if symbol else None,
+        "sessions": len(sessions),
+        "ticks": sum(x["tick_count"] for x in sessions),
+        "candles": sum(x["candle_count"] for x in sessions),
+        "first_date": sessions[-1]["market_date"] if sessions else None,
+        "last_date": sessions[0]["market_date"] if sessions else None,
+    }
+

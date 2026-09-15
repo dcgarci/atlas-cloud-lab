@@ -1,0 +1,15 @@
+ATLAS V2.12.20-B VALIDATION REPORT
+2026-09-15
+
+RESULTADO AUTOMATIZADO
+205 passed
+0 failed
+
+NOVO DIAGNÓSTICO INCORPORADO
+Em validação real foi identificado EXCEL.EXE -Embedding invisível, iniciado por DCOM, como pai de profitchart.exe. Encerrar esse Excel órfão interrompeu definitivamente a reabertura automática do Profit.
+
+CONTRATO DE SEGURANÇA IMPLEMENTADO
+Somente um EXCEL.EXE com -Embedding, sem janela principal visível e com profitchart.exe como filho pode ser saneado automaticamente. Excel normal/visível não é elegível.
+
+STATUS
+CHECKPOINT PRONTO PARA TESTE REAL CONTROLADO.

@@ -1,0 +1,50 @@
+ATLAS V2.12.20 LAB — Runtime Autônomo + Auto Map sem COM
+
+OBJETIVO
+Eliminar operações manuais de PowerShell/processos durante o uso normal e endurecer a transição entre versões do ATLAS.
+
+ALTERAÇÕES PRINCIPAIS
+1. Runtime autônomo
+- trava de inicialização concorrente por mutex;
+- detecção de backend ATLAS/ORT antigo na porta 8000;
+- encerramento automático somente de processos comprovadamente pertencentes ao ATLAS/ORT;
+- limpeza automática de backends duplicados/orfãos;
+- validação da versão e da origem do processo antes de reutilizar backend existente;
+- nunca encerra processo de terceiro apenas porque usa a porta 8000.
+
+2. Cache/interface versionados
+- token do frontend atualizado para 21220;
+- WebRuntime_21220;
+- shells antigos do próprio ATLAS são encerrados automaticamente para impedir interface de versão anterior em cache.
+
+3. Launcher nativo
+- mutex de instância única;
+- foco na janela ATLAS existente quando já houver instância ativa;
+- validação do PID do backend antes de encerrar versão anterior;
+- BrowserFallback_21220.
+
+4. AUTO MAPEAR Profit/Excel
+- não depende mais do COM para descobrir cabeçalhos;
+- lê somente a estrutura do arquivo XLSX/XLSM no disco com openpyxl;
+- não cria Excel oculto;
+- não toca no RTD;
+- funciona mesmo quando o workbook aberto não aparece no ROT/COM;
+- retorna discovery_source=FILE_STATIC.
+
+5. Dependência
+- openpyxl>=3.1,<4 adicionada ao backend.
+
+PENDÊNCIAS QUE EXIGEM WINDOWS/PROFIT/EXCEL REAL
+- validar troca automática V2.12.19 -> V2.12.20 em um clique;
+- validar AUTO MAPEAR com Roteamento_REPLAY.xlsm aberto;
+- validar recovery real do popup RTD/#N/D/restart do Excel;
+- validar LIVE em mercado aberto;
+- regressão final Copy Trader.
+
+REV3 — RTD NO-DATA STATE HARDENING
+- #N/D / #N/A / códigos de erro RTD não são mais tratados como falha COM/timestamp inválido.
+- Excel/COM permanece CONNECTED quando o workbook está acessível mas o RTD ainda não publicou dados.
+- O ATLAS não entra em RECONNECTING nem reinicia Excel por simples ausência de dados RTD.
+- Modo LIVE/REPLAY detectado é preservado durante estado sem dados.
+- Interface mostra MERCADO = SEM DADOS e mantém sinais congelados até chegar tick válido.
+- Leitura continua em polling e recupera automaticamente quando o RTD volta a publicar.

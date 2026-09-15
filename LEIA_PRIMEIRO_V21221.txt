@@ -1,0 +1,25 @@
+ATLAS V2.12.21 — LIVE OPERATIONAL + ORT DECISION HARDENING
+
+OBJETIVO DESTA VERSÃO
+Usar o ATLAS como espelho operacional para o WIN ao vivo, mantendo o contexto dos
+5 pregões e o Copy Trader preservado, mas sem deixar o REPLAY interferir no runtime.
+
+PRIMEIRA EXECUÇÃO
+1. Extraia a pasta em um local novo.
+2. Execute ATLAS.bat.
+3. A primeira abertura recompila a interface automaticamente se necessário.
+4. O topo deve mostrar V2.12.21.
+
+PERFIL
+- LIVE: ATIVO.
+- Contexto 5 pregões: ATIVO.
+- Topos/Fundos 5P: ATIVO.
+- Copy Trader LAB: PRESERVADO.
+- Execução real Copy Trader: DESABILITADA.
+- REPLAY: INATIVO.
+- Arbitragem automática entre Roteamento.xlsm e Roteamento_REPLAY.xlsm: INATIVA.
+
+IMPORTANTE
+O transporte LIVE atual continua sendo Roteamento.xlsm / WINV26_F_0. O leitor de
+REPLAY e a lógica de duas planilhas continuam no projeto, mas não participam do
+fluxo operacional desta versão.

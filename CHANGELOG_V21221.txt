@@ -1,0 +1,55 @@
+ATLAS V2.12.21 — LIVE OPERATIONAL + ORT DECISION HARDENING
+Data: 15/09/2026
+
+BASE
+- Evolução direta da V2.12.20-B REV3.
+- Sem rollback das correções de runtime, RTD #N/D, launcher e segurança.
+
+ESCOPO OPERACIONAL ATIVO
+- WIN LIVE / pregão atual como foco operacional.
+- Contexto dos 5 pregões anteriores permanece ativo.
+- Copy Trader Profit permanece preservado em LAB, sem execução real.
+- ATLAS continua como espelho operacional; ordem manual no Profit.
+
+REPLAY — PRESERVADO, MAS INATIVO
+- Runtime de Replay bloqueado por feature profile.
+- Roteamento_REPLAY.xlsm e RTD WINV26_G_0 permanecem no código para fase futura.
+- Auditoria/controle de Replay removidos do fluxo principal da interface.
+- Arbitragem automática LIVE x REPLAY desativada.
+- Se Roteamento.xlsm LIVE estiver aberto, ele é a única fonte Excel ativa.
+
+MOTIVO DA PAUSA DO REPLAY
+- Ciclo anterior consumiu horas com ambiguidade LIVE/REPLAY, workbook oculto,
+  RTD #N/D, recuperação COM/DCOM e EXCEL.EXE -Embedding órfão.
+- O Excel órfão chegou a reabrir o Profit automaticamente.
+- Esse conjunto fica isolado para uma etapa futura e não pode bloquear o uso LIVE.
+
+CONTEXTO 5 PREGÕES
+- Janela operacional continua limitada aos 5 pregões anteriores.
+- Mantém máxima, mínima, meio, localização, direção dos fechamentos e regime de range.
+- Adicionados TOPOS 5P e FUNDOS 5P estruturais com agrupamento por proximidade,
+  número de toques, força e distância do preço atual.
+- O contexto 5P continua sendo confluência; não autoriza entrada isoladamente.
+
+4 PILARES ORT
+1. VIÉS DIRECIONAL (-100 a +100)
+2. PONTUAÇÃO DE MERCADO (0 a 100)
+3. PONTUAÇÃO DA OPERAÇÃO (0 a 100)
+4. PERMISSÃO ORT (BLOCKED / WATCH / AUTHORIZED)
+
+- Macro x Micro passa a expor estado operacional.
+- Evidências são agrupadas por famílias para reduzir dupla contagem.
+- FLOW/AGRESSÃO não é inventado: aparece como indisponível até existir feed independente.
+- Permissão ORT permanece fail-closed e soberana.
+
+FEED
+- Mantido hardening #N/D da REV3.
+- REPLAY não participa da detecção operacional.
+- LIVE Roteamento.xlsm continua sendo o transporte RTD disponível nesta fase.
+
+VALIDAÇÃO INTERNA
+- 212 testes Python: PASS.
+- TypeScript (tsc --noEmit): PASS.
+- Build Vite completo não executado neste Linux porque o pacote contém node_modules
+  preparado para Windows e falta o binário opcional Rollup Linux. O fluxo oficial
+  PREPARAR_ATLAS.bat recompila a interface no Windows na primeira execução.

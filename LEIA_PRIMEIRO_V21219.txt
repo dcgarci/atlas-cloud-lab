@@ -1,0 +1,11 @@
+ATLAS V2.12.20 LAB — BUILD DE TESTE
+
+Esta versao consolida as melhorias validadas do historico de 5 pregoes e a nova navegacao visual.
+
+INICIAR
+1. Execute PREPARAR_ATLAS.bat se estiver em uma maquina/pasta nova.
+2. Execute ATLAS.bat para iniciar.
+3. Confira no rodape/health que a versao e 2.12.20.
+
+IMPORTANTE
+Este build ainda possui pendencias conhecidas descritas em CHANGELOG_V21220.txt. Em especial, o AUTO MAPEAR REPLAY via COM continua pendente de correcao.

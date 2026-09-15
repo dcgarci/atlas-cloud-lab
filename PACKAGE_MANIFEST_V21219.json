@@ -1,0 +1,57 @@
+{
+  "version": "2.12.20",
+  "build": "LAB Historical 5D + Navigation UX + Copy Trader UI",
+  "date": "2026-09-14",
+  "validated": {
+    "pytest": "198 passed",
+    "typescript": "tsc -b OK",
+    "historical_db": "565 candles / 5 sessions / 0 gaps"
+  },
+  "pending_file": "PENDENCIAS_V21220.txt",
+  "files": {
+    "VERSION": {
+      "sha256": "051c571c9eca56d27da7493844764b4f76be10035a8c9c2a02aa08b9157aa2e3",
+      "bytes": 8
+    },
+    "backend/app/main.py": {
+      "sha256": "09295aa15ef57bc7bcd36faa63e72c563c28b9b79c11ed031879e8792083a752",
+      "bytes": 3581
+    },
+    "backend/app/market/vault.py": {
+      "sha256": "d606aa888caf907317f45fa2fe1e00437f45eb6bb2a63cd795f0acaad9b334a4",
+      "bytes": 28769
+    },
+    "backend/app/context/seven_day.py": {
+      "sha256": "a22f55b1d19725555258ef1184b182120caa1d2799333f8e39d679891acc85a4",
+      "bytes": 3815
+    },
+    "frontend/src/components/Nav.tsx": {
+      "sha256": "9eba0ad46daede2ea0dfcb44d4085c0e6833eaa8855f5d25d2164b72f352c15c",
+      "bytes": 1653
+    },
+    "frontend/src/components/ProfessionalMarketChart.tsx": {
+      "sha256": "0439d8c432549b80aa7a71db7ac2ac7bf51649a5ec5b2c5699e8bbb9539b5a8c",
+      "bytes": 64660
+    },
+    "frontend/src/styles.css": {
+      "sha256": "04b4145e1b2014dce77beb66019be47ce7ce14b4cbd491efdb46f6e35b48a4d0",
+      "bytes": 199231
+    },
+    "launcher/ort_launcher.py": {
+      "sha256": "8257b2deb882871beb71fed93ec9bf7cbc6bb3d1c26d96e27634dfadc90bcb9f",
+      "bytes": 11741
+    },
+    "ATLAS.bat": {
+      "sha256": "a4543cd9d77b037aad6051e33afe3e2fae38cdabdf5b2e06a153728e30a6f8da",
+      "bytes": 710
+    },
+    "PREPARAR_ATLAS.bat": {
+      "sha256": "e4114f3e200451863abe0950dae13ab77439381fd7c5ae13a60d928cc712f10c",
+      "bytes": 61
+    },
+    "VALIDAR_ATLAS.bat": {
+      "sha256": "d2995778968c1bb2b0767abd45b297b0b10a7b8d58239776c31952ad87ad6882",
+      "bytes": 60
+    }
+  }
+}

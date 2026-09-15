@@ -1,0 +1,12 @@
+ATLAS V2.12.21 CLOUD LAB R1 — CLOUD LAB FOUNDATION
+Data: 15/09/2026
+
+- Base direta: V2.12.21 LIVE Operational + ORT Hardening.
+- Adicionado Cloud Gateway FastAPI independente do backend operacional local.
+- Adicionado ATLAS Local Agent outbound-only para relay HTTP e streams WebSocket.
+- Frontend preservado; adicionada configuração Cloud por variáveis VITE_API_BASE_URL/VITE_WS_BASE_URL.
+- Adicionado fallback SPA para Cloudflare Pages.
+- Adicionado Blueprint render.yaml para Render Free.
+- Adicionada migration inicial PostgreSQL/Supabase.
+- Cloud Lab permanece fail-closed e sem execução LIVE remota.
+- Nenhum endpoint crítico do núcleo local foi removido ou reescrito.

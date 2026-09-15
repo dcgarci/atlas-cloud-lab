@@ -1,0 +1,90 @@
+ATLAS V2.12.20 LAB — COPY TRADER / SAFETY HARDENING
+Data: 12/09/2026
+
+OBJETIVO DESTA VERSÃO
+Consolidar as validações da V2.12.17 e corrigir os problemas encontrados no diagnóstico de campo antes de qualquer evolução para envio de ordens externas.
+
+1. COPY TRADER — NOVA IDENTIDADE VISUAL
+- Menu "PROFIT BRIDGE" alterado para "COPY TRADER".
+- Cockpit renomeado para "COCKPIT COPY TRADER".
+- SOFTWARE DA CORRETORA agora exibe somente DETECTADO / NÃO DETECTADO.
+- STATUS DO SOFTWARE agora exibe somente ONLINE / OFFLINE.
+- HEARTBEAT renomeado para HEARTBEAT DO BRIDGE.
+- Conexão e paridade passaram a usar nomenclatura genérica PLATAFORMA.
+- Barra principal de feedback operacional centralizada e destacada.
+
+2. DETECÇÃO PROCESS-FIRST / PID-BOUND
+- Removida a detecção baseada em palavras no título de janelas.
+- O processo permitido é localizado por nome exato de executável.
+- A janela somente é válida se o PID dela for exatamente o PID do processo detectado.
+- Janelas de Excel, Explorer, ZIP ou qualquer outro processo não podem ser aceitas como plataforma.
+- Se o processo desaparecer: NÃO DETECTADO + OFFLINE + janela/handle/PID limpos.
+- Nomes de executáveis permitidos podem ser configurados por ATLAS_COPYTRADER_PROCESS_NAMES.
+
+3. HEARTBEAT DO BRIDGE
+- Separado definitivamente do status ONLINE/OFFLINE da plataforma.
+- Estados: NORMAL / DEGRADADO / CRÍTICO, calculados por latência sustentada.
+- O heartbeat continuar ativo não implica que a plataforma esteja online.
+
+4. STATUS/FRESHNESS DOS DADOS
+- Copy Trader expõe STATUS DOS DADOS e IDADE DOS DADOS.
+- Estados: INATIVO / CONECTANDO / ATIVO / ATRASADO / SEM RESPOSTA.
+- Se uma fonte externa ativa ficar ATRASADA ou SEM RESPOSTA, novas entradas/reversões supervisionadas são bloqueadas.
+
+5. MARKET DATA SANITY GATE
+- Detecção de salto anormal de preço em janela curta.
+- Tick anômalo é colocado em quarentena antes de alimentar PnL, MAE, Stop, Scanner e estratégia.
+- A retomada exige sequência de ticks coerentes e ressincronização do runtime.
+- Eventos de auditoria: MARKET_DATA_SANITY_BLOCK / MARKET_DATA_RESYNCED.
+
+6. REWIND / REGRESSÃO TEMPORAL
+- Regressão de timestamp em fonte externa gera SOURCE_TIME_REGRESSION.
+- Runtime volátil é resetado de forma determinística.
+- Posição Paper aberta é marcada explicitamente como POSITION_ABORTED no diagnóstico antes do reset.
+- Evita carregar uma posição de um ponto futuro para um Replay rebobinado.
+
+7. TRADE LIFECYCLE / CRONOLOGIA
+- Fechamento com exit_ts anterior ao entry_ts é bloqueado.
+- Evento POSITION_CLOSE_BLOCKED_TIME registra a falha.
+- Reset com posição aberta gera POSITION_ABORTED em vez de deixar ciclo órfão silencioso.
+- Trades persistidos passam a carregar run_id e replay_session_id.
+- Migração SQLite aditiva cria as novas colunas automaticamente.
+
+8. AUDITORIA DE BLOQUEIOS
+- Tentativas recusadas pelo Copy Trader agora geram SAFETY_BLOCK.
+- Registra motivo, código, modo, posição, quantidade e order_intent_id.
+- Exemplos: Bridge desarmado, posição já aberta, inverter zerado, software offline, quantidade acima do risco, ID duplicado e dados stale.
+
+9. MOTOR DE DECISÃO — EMPATE SEM VIÉS
+- Empate exato de maior rank entre LONG e SHORT não escolhe mais LONG pela ordem da lista.
+- Empate direcional passa a NO TRADE com DIRECTIONAL_TIE / NO_TRADE_ON_EXACT_TIE.
+- Evento DECISION_TIE_BLOCKED disponível para auditoria.
+
+10. DIAGNÓSTICO MAIS ASSERTIVO
+- CSVs achatados agora incluem run_id, event_ts_utc, market_ts_utc e category.
+- Novo copy_trader_lab.csv; alias antigo mantido apenas para compatibilidade de ferramentas.
+- summary.json separa current_session de period_summary.
+- Trades exportados incluem run_id e replay_session_id quando disponíveis.
+
+PRESERVADO DA V2.12.17
+- SIMULAÇÃO SEGURA aprovada.
+- SIMULAÇÃO SUPERVISIONADA aprovada.
+- COMPRAR / VENDER / ZERAR / INVERTER.
+- Bloqueio de compra/venda duplicada.
+- Bloqueio de INVERTER quando ZERADO.
+- LIMPAR LOG visual sem apagar auditoria persistente.
+- Smart Protection sem regressão de stop nos testes anteriores.
+- ENVIO DE ORDENS REAIS continua DESABILITADO.
+
+VALIDAÇÃO INTERNA V2.12.20
+- Python compileall: APROVADO.
+- Backend pytest: 194 testes aprovados.
+- Testes dedicados V2.12.20: detecção PID, janela falsa, estado supervisionado, SAFETY_BLOCK, cronologia, lifecycle, sanity gate e contratos de UI/diagnóstico.
+- Migração SQLite: run_id/replay_session_id confirmados em paper_trades.
+- Exportação de diagnóstico V2.12.20: APROVADA.
+- Frontend TS/TSX: 48 arquivos verificados por transpile sintático sem erro.
+- Build npm completo não foi concluído no ambiente Linux desta geração porque o pacote não contém node_modules e a instalação externa excedeu o limite do ambiente. PREPARAR_ATLAS.bat executa npm install + build na máquina Windows.
+
+SEGURANÇA
+- real_execution_enabled=false por contrato.
+- Nenhuma função desta versão envia ordens reais para a corretora.
