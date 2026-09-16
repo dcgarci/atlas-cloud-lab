@@ -1,0 +1,39 @@
+{
+  "name": "atlas-frontend",
+  "private": true,
+  "version": "2.12.21",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "deps:verify": "npm ls vite esbuild three three-mesh-bvh",
+    "security:runtime": "npm audit --omit=dev",
+    "security:all": "npm audit"
+  },
+  "dependencies": {
+    "@react-three/drei": "^9.120.0",
+    "@react-three/fiber": "^8.17.10",
+    "@react-three/postprocessing": "^2.16.3",
+    "echarts": "^5.5.1",
+    "framer-motion": "^11.11.17",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.170.0",
+    "zustand": "^5.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.170.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "5.4.21"
+  },
+  "overrides": {
+    "three-mesh-bvh": "0.8.3"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true
+  }
+}
