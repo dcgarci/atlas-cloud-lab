@@ -11,6 +11,8 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import hashlib
 
 APP_VERSION = "2.12.21-cloud-lab-r1"
 AGENT_TOKEN = os.getenv("ATLAS_CLOUD_AGENT_TOKEN", "").strip()
@@ -51,6 +53,72 @@ class AgentSession:
 
 _agent: AgentSession | None = None
 _agent_lock = asyncio.Lock()
+
+class AuthBody(BaseModel):
+    name: str | None = None
+    email: str
+    password: str
+
+
+_users: dict[str, dict[str, Any]] = {}
+_tokens: dict[str, str] = {}
+
+
+def _hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+@app.post("/api/auth/register")
+async def auth_register(body: AuthBody):
+    email = body.email.lower().strip()
+
+    if email in _users:
+        raise HTTPException(status_code=409, detail="Usuário já cadastrado.")
+
+    user = {
+        "name": body.name or email.split("@")[0],
+        "email": email,
+        "password": _hash_password(body.password),
+    }
+
+    _users[email] = user
+
+    token = uuid.uuid4().hex
+    _tokens[token] = email
+
+    return {
+        "token": token,
+        "user": {
+            "name": user["name"],
+            "email": user["email"],
+        },
+    }
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: AuthBody):
+    email = body.email.lower().strip()
+
+    user = _users.get(email)
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuário não encontrado.")
+
+    if user["password"] != _hash_password(body.password):
+        raise HTTPException(status_code=401, detail="Senha inválida.")
+
+    token = uuid.uuid4().hex
+    _tokens[token] = email
+
+    return {
+        "token": token,
+        "user": {
+            "name": user["name"],
+            "email": user["email"],
+        },
+    }
+
+
 
 
 def _token_ok(value: str | None) -> bool:
